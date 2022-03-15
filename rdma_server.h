@@ -23,10 +23,15 @@ namespace rdma {
 
     class Server {
     public:
-        Server(bool is_server);
+        explicit Server(bool is_server): is_server_(is_server) {};
         ~Server() =default;
 
         void InitConnection();
+
+        size_t Write(const char* payload, size_t pld_size);
+
+        size_t Read(char* buffer, size_t bf_size);
+
     private:
 
         void modify_qp_to_init();
@@ -35,18 +40,20 @@ namespace rdma {
 
         void connect_qp();
 
-        struct ibv_context* ib_ctx;
-        struct ibv_port_attr port_attr;
-        struct ibv_pd* pd;
-        struct ibv_mr* mr;
-        struct ibv_cq* cq;
-        struct ibv_qp* qp;
+        void poll_cq();
 
-        char* buf;
+        struct ibv_context* ib_ctx {nullptr};
+        struct ibv_port_attr port_attr {};
+        struct ibv_pd* pd {nullptr};
+        struct ibv_mr* mr {nullptr};
+        struct ibv_cq* cq {nullptr};
+        struct ibv_qp* qp {nullptr};
 
-        bool is_server_{false};
+        char* buf {nullptr};
 
-        con_data_t remote_con;
+        const bool is_server_{false};
+
+        con_data_t remote_con {};
     };
 }
 

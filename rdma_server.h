@@ -23,7 +23,7 @@ namespace rdma {
 
     class Server {
     public:
-        explicit Server(bool is_server): is_server_(is_server) {};
+        explicit Server(bool is_server, char* buf): is_server_(is_server), buf_(buf) {};
         ~Server() =default;
 
         void InitConnection();
@@ -31,6 +31,8 @@ namespace rdma {
         size_t Write(const char* payload, size_t pld_size);
 
         size_t Read(char* buffer, size_t bf_size);
+
+        void WriteThroughputBench(size_t total_ops, size_t blk_size, size_t max_bacth, size_t max_post, bool random);
 
     private:
 
@@ -49,7 +51,7 @@ namespace rdma {
         struct ibv_cq* cq {nullptr};
         struct ibv_qp* qp {nullptr};
 
-        char* buf {nullptr};
+        char* buf_ {nullptr};
 
         const bool is_server_{false};
 

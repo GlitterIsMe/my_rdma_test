@@ -5,6 +5,7 @@ set(CMAKE_CXX_STANDARD 14)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(IB REQUIRED libibverbs)
 pkg_check_modules(GFLAGS REQUIRED gflags)
+pkg_check_modules(LIBPMEM REQUIRED libpmem)
 
 # Test for server socket
 add_executable(server "")
@@ -24,8 +25,18 @@ add_executable(rdma_server "")
 target_sources(rdma_server PUBLIC
         "main.cpp"
         "rdma_server.cc"
-        "sock.cc")
-target_include_directories(rdma_server PUBLIC . ${IB_INCLUDE_DIRS} ${GFLAGS_INCLUDE_DIRS})
-target_link_libraries(rdma_server ${IB_LIBRARIES} ${GFLAGS_LIBRARIES})
+        "sock.cc"
+        "pmem.cc"
+        "util.h")
+target_include_directories(rdma_server PUBLIC
+        .
+        ${IB_INCLUDE_DIRS}
+        ${GFLAGS_INCLUDE_DIRS}
+        ${LIBPMEM_INCLUDE_DIRS})
+
+target_link_libraries(rdma_server
+        ${IB_LIBRARIES}
+        ${GFLAGS_LIBRARIES}
+        ${LIBPMEM_LIBRARIES})
 
 

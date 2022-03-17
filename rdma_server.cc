@@ -4,9 +4,12 @@
 
 #include<infiniband/verbs.h>
 #include <iostream>
+#include <chrono>
 
 #include "rdma_server.h"
 #include "sock.h"
+#include "util.h"
+#include "pmem.h"
 
 namespace rdma {
     void Server::InitConnection() {
@@ -22,10 +25,10 @@ namespace rdma {
 
         ibv_query_port(ib_ctx, 1, &port_attr);
 
-        buf = new char[1024];
-        memset(buf, 0, 1024);
+        buf_ = new char[1024];
+        memset(buf_, 0, 1024);
 
-        mr = ibv_reg_mr(pd, buf, 1024, IBV_ACCESS_LOCAL_WRITE |
+        mr = ibv_reg_mr(pd, buf_, 1024, IBV_ACCESS_LOCAL_WRITE |
                 IBV_ACCESS_REMOTE_READ |
                 IBV_ACCESS_REMOTE_WRITE |
                 IBV_ACCESS_REMOTE_ATOMIC);
@@ -121,7 +124,7 @@ namespace rdma {
         ibv_query_gid(ib_ctx, 1, 2, &lgid);
 
         con_data_t local_con;
-        local_con.addr = (uintptr_t)buf;
+        local_con.addr = (uintptr_t)buf_;
         local_con.rkey = mr->rkey;
         local_con.qp_num = qp->qp_num;
         local_con.lid = port_attr.lid;
@@ -158,11 +161,11 @@ namespace rdma {
         struct ibv_sge sge;
         struct ibv_send_wr *bad;
 
-        sge.addr = (uintptr_t) buf;
+        sge.addr = (uintptr_t) buf_;
         sge.length = pld_size;
         sge.lkey = mr->lkey;
 
-        memcpy(buf, payload, pld_size);
+        memcpy(buf_, payload, pld_size);
 
         wr.next = nullptr;
         wr.wr_id = 0;
@@ -185,7 +188,7 @@ namespace rdma {
         struct ibv_sge sge;
         struct ibv_send_wr *bad;
 
-        sge.addr = (uintptr_t)buf;
+        sge.addr = (uintptr_t)buf_;
         sge.length = 1024;
         sge.lkey = mr->lkey;
 
@@ -202,7 +205,7 @@ namespace rdma {
         int res = ibv_post_send(qp, &wr, &bad);
         printf("post read requests[%d]\n", res);
         poll_cq();
-        memcpy(buffer, buf, 1024);
+        memcpy(buffer, buf_, 1024);
         return 0;
     }
 
@@ -218,5 +221,64 @@ namespace rdma {
                 break;
             }
         }
+    }
+
+    void Server::WriteThroughputBench(size_t total_ops, size_t blk_size, size_t max_bacth, size_t max_post, bool random) {
+        std::cout << "Run RDMA Write Benchmark: \n"
+                    << "Total ops: " << total_ops << "\n"
+                    << "Block size: " << blk_size << "\n"
+                    << "Max batch: " << max_bacth << "\n"
+                    << "Max post list: " << max_post << "\n"
+                    << "Random: " << random << "\n";
+        ibv_send_wr wr[max_post], *bad;
+        ibv_sge sge;
+        size_t posted_wr;
+        size_t offset = 0;
+        size_t finished = 0;
+        uint64_t seed = 0xdeadbeef;
+
+        sge.lkey = mr->lkey;
+        sge.addr = (uintptr_t)buf_;
+        sge.length = blk_size;
+
+        auto start = std::chrono::high_resolution_clock::now();
+        for(; finished < total_ops; finished += max_post) {
+            // post max_post WR to the QP;
+            for(int i = 0; i < max_post; i++) {
+                wr[i].opcode = IBV_WR_RDMA_WRITE;
+                wr[i].wr_id = 0;
+                wr[i].num_sge = 1;
+                wr[i].sg_list = &sge;
+
+                if (i < max_post - 1) {
+                    wr[i].next = &wr[i+1];
+                } else {
+                    wr[i].next = nullptr;
+                }
+
+                if (posted_wr % max_bacth == 0 && posted_wr > 0) {
+                    wr[i].send_flags = IBV_SEND_SIGNALED;
+                    ibv_wc wc;
+                    ibv_poll_cq(cq, 1, &wc);
+                }
+
+                wr[i].wr.rdma.rkey = remote_con.rkey;
+                if (random) {
+                    size_t rd_off  = hrd_fastrand(&seed) % pmem_size;
+                    if (pmem_size - rd_off < blk_size) rd_off -= blk_size;
+                    wr[i].wr.rdma.remote_addr = remote_con.addr + rd_off;
+                } else {
+                    wr[i].wr.rdma.remote_addr = remote_con.addr + offset;
+                    offset += blk_size;
+                }
+            }
+            ibv_post_send(qp, wr, &bad);
+        }
+
+        auto end = std::chrono::high_resolution_clock::now();
+        uint64_t us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+        std::cout << "Run time: " << us << " us\n";
+        std::cout << "IOPS: " << (double)total_ops / us * 1000000 / 1000 << "KOPS\n";
+        std::cout << "Throughput: " << (total_ops * blk_size / 1024 / 1024.0) / us * 1000000 << "MB/s\n";
     }
 };

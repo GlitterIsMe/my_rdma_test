@@ -28,15 +28,16 @@ namespace sock {
                 fprintf(stderr, "bind failed\n");
                 exit(-1);
             }
-            printf("bind local sock\n");
+            printf("bind local sock %d with ip %s\n", local_sock, ip.c_str());
             listen(local_sock, 10);
             printf("listen to local socket %d\n", local_sock);
             socklen_t client_addr_len;
             remote_sock = accept(local_sock, (struct sockaddr*)&client_addr, &client_addr_len);
-            printf("accept connection of client\n");
+            char buf[256];
+            printf("accept connection of client %s from socket %d\n", inet_ntop(AF_INET, &client_addr.sin_addr, buf, 256), remote_sock);
         } else {
             int connect_res = connect(local_sock, (struct sockaddr*)&server_addr, sizeof(server_addr));
-            printf("connect to the server\n");
+            printf("connect to the server %s:%d\n", ip.c_str(), port);
             if (connect_res != 0) {
                 fprintf(stderr, "connect failed\n");
                 exit(-1);
@@ -48,17 +49,17 @@ namespace sock {
     int exchange_message(bool is_server, char* send_buf, size_t send_size, char* recv_buf, size_t recv_size){
         if (is_server) {
             read(remote_sock, recv_buf, recv_size);
-            printf("server read\n");
+            //printf("server read\n");
             //printf("[%lu]%s\n", strlen(recv_buf), recv_buf);
             //sprintf(send_buf, "hello from server\n");
             write(remote_sock, send_buf, send_size);
-            printf("server write\n");
+            //printf("server write\n");
         } else {
             //sprintf(send_buf, "hello from client\n");
             write(local_sock, send_buf, send_size);
-            printf("client write\n");
+            //printf("client write\n");
             read(local_sock, recv_buf, recv_size);
-            printf("client read\n");
+            //printf("client read\n");
             //printf("[%lu]%s\n",strlen(recv_buf), recv_buf);
         }
         return 0;

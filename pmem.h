@@ -10,8 +10,11 @@
 
 namespace rdma {
     extern uint64_t pmem_size;
+    extern size_t mapped_size;
 
     char* map_pmem_file(const std::string pmem_path);
+
+    void unmap_file(char* raw);
 }
 
 #endif //RDMA_PMEM_H

@@ -5,13 +5,10 @@
 #ifndef RDMA_RDMA_SERVER_H
 #define RDMA_RDMA_SERVER_H
 
+#include <vector>
 #include "infiniband/verbs.h"
 
 namespace rdma {
-
-    struct rdma_resource {
-
-    };
 
     struct con_data_t {
         uint64_t addr; // buffer addr
@@ -21,9 +18,43 @@ namespace rdma {
         uint8_t  gid[16]; // gid
     }__attribute__((packed));
 
+    struct RDMA_Context {
+        struct ibv_context* ib_ctx {nullptr};
+        struct ibv_port_attr port_attr {};
+        struct ibv_pd* pd {nullptr};
+        struct ibv_mr* mr {nullptr};
+
+        int num_qp;
+        struct ibv_cq** cqs {nullptr};
+        struct ibv_qp** qps {nullptr};
+
+        char* buf {nullptr};
+
+        rdma::con_data_t* remote_conn;
+
+        ~RDMA_Context() {
+            delete[] remote_conn;
+            for (int i = 0; i < num_qp; ++i) {
+                ibv_destroy_qp(qps[i]);
+                ibv_destroy_cq(cqs[i]);
+            }
+            delete[] cqs;
+            delete[] qps;
+            ibv_dereg_mr(mr);
+            ibv_dealloc_pd(pd);
+            ibv_close_device(ib_ctx);
+        }
+    };
+
+    void InitRDMAContext(rdma::RDMA_Context* ctx, int num_qp, char* buf, size_t buf_size);
+
     class Server {
     public:
-        explicit Server(bool is_server, char* buf): is_server_(is_server), buf_(buf) {};
+        /*explicit Server(bool is_server, char* buf, int num_qp):
+            is_server_(is_server),
+            buf_(buf),
+            num_qp_(num_qp){};*/
+        explicit Server(RDMA_Context* ctx, bool is_server): ctx_(ctx), is_server_(is_server) {};
         ~Server() =default;
 
         void InitConnection();
@@ -32,30 +63,26 @@ namespace rdma {
 
         size_t Read(char* buffer, size_t bf_size);
 
-        void WriteThroughputBench(size_t total_ops, size_t blk_size, size_t max_bacth, size_t max_post, bool random);
+        /*void WriteThroughputBench(size_t total_ops, size_t blk_size,
+                                  size_t max_bacth, size_t max_post,
+                                  bool random);*/
+
+        static void WriteThroughputBench(RDMA_Context* ctx, int threads, int qp_idx, size_t total_ops,
+                                  size_t blk_size, size_t max_bacth,
+                                  size_t max_post, bool random, bool persist);
 
     private:
 
-        void modify_qp_to_init();
-        void modify_qp_to_rtr(uint32_t remote_qpn, uint16_t dlid);
-        void modify_qp_to_rts();
+        void modify_qp_to_init(struct ibv_qp* qp);
+        void modify_qp_to_rtr(struct ibv_qp* qp, uint32_t remote_qpn, uint16_t dlid, uint8_t* gid);
+        void modify_qp_to_rts(struct ibv_qp* qp);
 
-        void connect_qp();
+        void connect_qp(struct ibv_cq* cq, struct ibv_qp* qp, con_data_t* remote_conn);
 
-        void poll_cq();
+        void poll_cq(struct ibv_cq* cq);
 
-        struct ibv_context* ib_ctx {nullptr};
-        struct ibv_port_attr port_attr {};
-        struct ibv_pd* pd {nullptr};
-        struct ibv_mr* mr {nullptr};
-        struct ibv_cq* cq {nullptr};
-        struct ibv_qp* qp {nullptr};
-
-        char* buf_ {nullptr};
-
+        RDMA_Context* ctx_;
         const bool is_server_{false};
-
-        con_data_t remote_con {};
     };
 }
 

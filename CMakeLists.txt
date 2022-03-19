@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 project(rdma)
 
 set(CMAKE_CXX_STANDARD 14)
+include(FindThreads)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(IB REQUIRED libibverbs)
 pkg_check_modules(GFLAGS REQUIRED gflags)
@@ -37,6 +38,7 @@ target_include_directories(rdma_server PUBLIC
 target_link_libraries(rdma_server
         ${IB_LIBRARIES}
         ${GFLAGS_LIBRARIES}
-        ${LIBPMEM_LIBRARIES})
+        ${LIBPMEM_LIBRARIES}
+        ${CMAKE_THREAD_LIBS_INIT})
 
 

@@ -11,7 +11,7 @@
 // Common parameters
 DEFINE_string(addr, "192.168.200.101", "The address of the target");
 DEFINE_bool(is_server, true, "Is this instance a server or a client");
-DEFINE_int32(num_qp, 1, "The number of qps");
+DEFINE_int32(num_threads, 1, "The number of threads for benchmarks, also the numbers of qps");
 
 // Parameters for Server
 DEFINE_bool(use_pmem, false, "Use pmem");
@@ -19,37 +19,42 @@ DEFINE_string(pmem_path, "/mnt/pmem/rdma", "The path to the pmem");
 DEFINE_uint64(pmem_size, 1024, "The size of the pmem file in MB");
 
 // Parameters for Client
-DEFINE_int32(num_threads, 1, "The number of threads for benchmarks");
 DEFINE_uint64(ops, 10000, "Ops");
 DEFINE_uint64(block_size, 256, "Block size");
 DEFINE_uint64(max_batch_signal, 16, "The number of WRs for one signal");
 DEFINE_uint64(max_post_list, 16, "The max number of WRs for each post send");
 DEFINE_bool(random, false, "Access pattern");
+DEFINE_bool(persist, true, "Whether persist the RDMA write");
 
 int main(int argc, char** argv) {
     google::ParseCommandLineFlags(&argc, &argv, true);
     char* buf;
     if (FLAGS_is_server) {
+        // For server
         if (FLAGS_use_pmem) {
+            // Using PM, mmap the pmem, the mapped size is stored in rdma::mapped_size;
             rdma::pmem_size = FLAGS_pmem_size * 1024 * 1024UL;
             buf = rdma::map_pmem_file(FLAGS_pmem_path.c_str());
         } else {
+            // Using DRAM, new buffer;
             buf = new char[FLAGS_pmem_size * 1024 * 1024];
         }
     } else {
+        // For client, new a 1GB buffer, and set the size of remote buffer
         rdma::pmem_size = 64UL * 1024 * 1024 * 1024;
         buf = new char[1UL * 1024 * 1024 * 1024];
     }
 
+    // Init RDMA resource
     rdma::RDMA_Context ctx;
     if (FLAGS_use_pmem) {
         std::cout << "use PMEM\n";
         size_t buf_size = FLAGS_is_server ? rdma::mapped_size : 1UL * 1024 * 1024 * 1024;
-        rdma::InitRDMAContext(&ctx, FLAGS_num_qp, buf, buf_size);
+        rdma::InitRDMAContext(&ctx, FLAGS_num_threads, buf, buf_size);
     } else {
         std::cout << "use DRAM\n";
         size_t buf_size = FLAGS_is_server ? FLAGS_pmem_size * 1024 * 1024 : 1UL * 1024 * 1024 * 1024;
-        rdma::InitRDMAContext(&ctx, FLAGS_num_qp, buf, buf_size);
+        rdma::InitRDMAContext(&ctx, FLAGS_num_threads, buf, buf_size);
     }
 
     rdma::Server server(&ctx, FLAGS_is_server);
@@ -76,7 +81,7 @@ int main(int argc, char** argv) {
             thrds.emplace_back(std::thread{rdma::Server::WriteThroughputBench, &ctx, FLAGS_num_threads, qp_idx,
                                            FLAGS_ops / FLAGS_num_threads, FLAGS_block_size,
                                            FLAGS_max_batch_signal,FLAGS_max_post_list,
-                                           FLAGS_random, true});
+                                           FLAGS_random, FLAGS_persist});
         }
         for (int i = 0; i < FLAGS_num_threads; ++i) {
             thrds[i].join();
@@ -100,7 +105,6 @@ int main(int argc, char** argv) {
             delete[] buf;
         }
     } else {
-        buf = new char[1UL * 1024 * 1024];
         delete[] buf;
     }
 

@@ -79,7 +79,7 @@ namespace rdma {
 
         void connect_qp(struct ibv_cq* cq, struct ibv_qp* qp, con_data_t* remote_conn);
 
-        void poll_cq(struct ibv_cq* cq);
+        static void poll_cq(struct ibv_cq* cq, int num_comps);
 
         RDMA_Context* ctx_;
         const bool is_server_{false};

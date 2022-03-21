@@ -61,6 +61,7 @@ namespace rdma {
             qp_init_attr.cap.max_recv_wr = 1024;
             qp_init_attr.cap.max_send_sge = 1;
             qp_init_attr.cap.max_recv_sge = 1;
+            qp_init_attr.sq_sig_all = 0;
             ctx->qps[i] = ibv_create_qp(ctx->pd, &qp_init_attr);
             //connect_qp(cqs[i], qps[i]);
         }
@@ -223,7 +224,7 @@ namespace rdma {
 
             int res = ibv_post_send(ctx_->qps[i], &wr, &bad);
             printf("post write requests[%d]\n", res);
-            poll_cq(ctx_->cqs[i]);
+            poll_cq(ctx_->cqs[i], 1);
         }
         return 0;
     }
@@ -250,26 +251,27 @@ namespace rdma {
 
             int res = ibv_post_send(ctx_->qps[i], &wr, &bad);
             printf("post read requests[%d]\n", res);
-            poll_cq(ctx_->cqs[i]);
+            poll_cq(ctx_->cqs[i], 1);
             memcpy(buffer, ctx_->buf, 1024);
         }
         return 0;
     }
 
-    void Server::poll_cq(struct ibv_cq* cq) {
+    void Server::poll_cq(struct ibv_cq* cq, int num_comps) {
         struct ibv_wc wc;
-        int res = 0;
-        while (res == 0) {
-            res = ibv_poll_cq(cq, 1, &wc);
+        int res = 0, total_comp = 0;
+        while (total_comp < num_comps) {
+            res = ibv_poll_cq(cq, num_comps, &wc);
             if (res > 0) {
+#ifdef DEBUG
                 if (wc.status != IBV_WC_SUCCESS) {
                     fprintf(stderr, "failed request[0x%x]\n", wc.status);
                 }
-                break;
+#endif
+                total_comp += res;
             }
         }
     }
-
     /*void Server::WriteThroughputBench(size_t total_ops, size_t blk_size, size_t max_bacth, size_t max_post, bool random) {
         *//*std::cout << "Run RDMA Write Benchmark: \n"
                     << "Total ops: " << total_ops << "\n"
@@ -340,8 +342,9 @@ namespace rdma {
                                       size_t total_ops, size_t blk_size, size_t max_batch,
                                       size_t max_post, bool random, bool persist) {
         std::cout << "thread [" << std::this_thread::get_id() << "], idx [" << qp_idx << "] start process\n";
-        ibv_send_wr wr[max_post], *bad;
-        ibv_sge sge;
+        ibv_send_wr wr[max_post], *bad = nullptr;
+        ibv_send_wr read_wr;
+        ibv_sge sge, read_sge;;
         size_t size_of_thread = pmem_size / threads;
         size_t start = qp_idx * size_of_thread;
         std::cout << "Allocated size of this thread " << size_of_thread << "\n";
@@ -359,7 +362,7 @@ namespace rdma {
             // post max_post WR to the QP;
             for(int i = 0; i < max_post; i++) {
                 wr[i].opcode = IBV_WR_RDMA_WRITE;
-                wr[i].wr_id = 0;
+                wr[i].wr_id = finished + i;
                 wr[i].num_sge = 1;
                 wr[i].sg_list = &sge;
 
@@ -369,7 +372,7 @@ namespace rdma {
                     wr[i].next = nullptr;
                 }
 
-                if (posted_wr % max_batch == 0) {
+                if (!persist && posted_wr % max_batch == 0) {
                     wr[i].send_flags = IBV_SEND_SIGNALED;
                 }
 
@@ -384,12 +387,10 @@ namespace rdma {
                 }
             }
             if (persist) {
-                ibv_sge read_sge;
                 read_sge.lkey = ctx->mr->lkey;
-                read_sge.addr = (uintptr_t)ctx->buf;
+                read_sge.addr = (uintptr_t)ctx->buf + 1024 * 1024;
                 read_sge.length = blk_size;
 
-                ibv_send_wr read_wr;
                 read_wr.opcode = IBV_WR_RDMA_READ;
                 read_wr.wr_id = 1;
                 read_wr.num_sge = 1;
@@ -401,14 +402,23 @@ namespace rdma {
 
                 wr[max_post - 1].next = &read_wr;
             }
-            ibv_post_send(ctx->qps[qp_idx], wr, &bad);
+            int ret = ibv_post_send(ctx->qps[qp_idx], wr, &bad);
+#ifdef DEBUG
+            if (ret) {
+                fprintf(stderr, "post send[%ld] failed [%d] [%s]\n",finished, ret, strerror(errno));
+            }
+            if (bad != nullptr)  {
+                fprintf(stderr, "bad wr [%ld] failed [%d] [%s]\n",finished, ret, strerror(errno));
+            }
+#endif
             posted_wr += max_post;
             if (posted_wr % max_batch == 0 && posted_wr > 0) {
-                ibv_wc wc;
-                ibv_poll_cq(ctx->cqs[qp_idx], 1, &wc);
-                if (wc.status != IBV_WC_SUCCESS) {
-                    fprintf(stderr, "post send failed\n");
-                }
+                poll_cq(ctx->cqs[qp_idx], 1);
+            }
+
+            if (finished % 10000 == 0) {
+                fprintf(stdout, "finished %ld\r", finished);
+                fflush(stdout);
             }
         }
         //std::cout << "thread " << qp_idx << " end process\n";

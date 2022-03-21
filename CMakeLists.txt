@@ -23,6 +23,11 @@ target_sources(client PUBLIC
 target_include_directories(client PUBLIC .)
 
 add_executable(rdma_server "")
+
+if (${CMAKE_BUILD_TYPE} STREQUAL "Debug")
+    target_compile_definitions(rdma_server PUBLIC -DDEBUG)
+endif ()
+
 target_sources(rdma_server PUBLIC
         "main.cpp"
         "rdma_server.cc"

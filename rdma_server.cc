@@ -6,6 +6,7 @@
 #include <iostream>
 #include <chrono>
 #include <thread>
+#include <cassert>
 
 #include "rdma_server.h"
 #include "sock.h"
@@ -101,6 +102,39 @@ namespace rdma {
         }
     }
 
+    void Server::connect_qp(struct ibv_cq* cq, struct ibv_qp* qp, con_data_t* remote_conn) {
+        union ibv_gid lgid;
+        ibv_query_gid(ctx_->ib_ctx, 1, 2, &lgid);
+
+        con_data_t local_con;
+        local_con.addr = (uintptr_t)ctx_->buf;
+        local_con.rkey = ctx_->mr->rkey;
+        local_con.qp_num = qp->qp_num;
+        local_con.lid = ctx_->port_attr.lid;
+        memcpy(local_con.gid, (char*)&lgid, 16);
+
+        std::cout << "Exchange QP info and connect\n";
+        sock::exchange_message(is_server_, (char*)&local_con, sizeof(con_data_t), (char*)remote_conn, sizeof(con_data_t));
+
+        char tmp;
+        char sync = 's';
+        sock::exchange_message(is_server_, &sync, 1, &tmp, 1);
+#ifdef DEBUG
+        std::cout << "local qpn:" << local_con.qp_num << "\n"
+                  << "lkey: " << local_con.rkey << "\n"
+                  << "local addr: " << local_con.addr << "\n"
+                  << "local lid: " << local_con.lid << "\n";
+
+        std::cout << "remote qpn:" << remote_conn->qp_num << "\n"
+                  << "rkey: " << remote_conn->rkey << "\n"
+                  << "remote addr: " << remote_conn->addr << "\n"
+                  << "remote lid: " << remote_conn->lid << "\n";
+#endif
+        modify_qp_to_init(qp);
+        modify_qp_to_rtr(qp, remote_conn->qp_num, remote_conn->lid, remote_conn->gid);
+        modify_qp_to_rts(qp);
+    }
+
     void Server::modify_qp_to_init(struct ibv_qp* qp) {
         struct ibv_qp_attr attr;
         int flags;
@@ -165,39 +199,6 @@ namespace rdma {
 
         int res = ibv_modify_qp(qp, &attr, flags);
         printf("Transfer QP to rts[%d]\n", res);
-    }
-
-    void Server::connect_qp(struct ibv_cq* cq, struct ibv_qp* qp, con_data_t* remote_conn) {
-        union ibv_gid lgid;
-        ibv_query_gid(ctx_->ib_ctx, 1, 2, &lgid);
-
-        con_data_t local_con;
-        local_con.addr = (uintptr_t)ctx_->buf;
-        local_con.rkey = ctx_->mr->rkey;
-        local_con.qp_num = qp->qp_num;
-        local_con.lid = ctx_->port_attr.lid;
-        memcpy(local_con.gid, (char*)&lgid, 16);
-
-        std::cout << "Exchange QP info and connect\n";
-        sock::exchange_message(is_server_, (char*)&local_con, sizeof(con_data_t), (char*)remote_conn, sizeof(con_data_t));
-
-        char tmp;
-        char sync = 's';
-        sock::exchange_message(is_server_, &sync, 1, &tmp, 1);
-
-        /*std::cout << "local qpn:" << local_con.qp_num << "\n"
-                << "lkey: " << local_con.rkey << "\n"
-                << "local addr: " << local_con.addr << "\n"
-                << "local lid: " << local_con.lid << "\n";
-
-        std::cout << "remote qpn:" << remote_conn->qp_num << "\n"
-                  << "rkey: " << remote_conn->rkey << "\n"
-                  << "remote addr: " << remote_conn->addr << "\n"
-                  << "remote lid: " << remote_conn->lid << "\n";*/
-
-        modify_qp_to_init(qp);
-        modify_qp_to_rtr(qp, remote_conn->qp_num, remote_conn->lid, remote_conn->gid);
-        modify_qp_to_rts(qp);
     }
 
     size_t Server::Write(const char *payload, size_t pld_size) {
@@ -265,7 +266,7 @@ namespace rdma {
             if (res > 0) {
 #ifdef DEBUG
                 if (wc.status != IBV_WC_SUCCESS) {
-                    fprintf(stderr, "failed request[0x%x]\n", wc.status);
+                    fprintf(stdout, "failed request [%ld] [0x%x]\n", wc.wr_id, wc.status);
                 }
 #endif
                 total_comp += res;
@@ -344,17 +345,25 @@ namespace rdma {
         std::cout << "thread [" << std::this_thread::get_id() << "], idx [" << qp_idx << "] start process\n";
         ibv_send_wr wr[max_post], *bad = nullptr;
         ibv_send_wr read_wr;
-        ibv_sge sge, read_sge;;
-        size_t size_of_thread = pmem_size / threads;
-        size_t start = qp_idx * size_of_thread;
-        std::cout << "Allocated size of this thread " << size_of_thread << "\n";
+        ibv_sge sge, read_sge;
+        size_t local_pm_size = pmem_size / threads;
+        size_t local_dram_size = CLIENT_BUF_SIZE / threads;
+        size_t pm_start = qp_idx * local_pm_size;
+        size_t dram_start = qp_idx * local_dram_size;
+        std::cout << "PM start " << pm_start << "\n";
+        std::cout << "DRAM start " << dram_start << "\n";
         size_t posted_wr = 0;
         size_t offset = 0;
         size_t finished = 0;
         uint64_t seed = 0xdeadbeef;
 
+        size_t remote_block_num = 0;
+        if (random) {
+            remote_block_num = pmem_size / blk_size;
+        }
+
         sge.lkey = ctx->mr->lkey;
-        sge.addr = (uintptr_t)ctx->buf;
+        sge.addr = (uintptr_t)ctx->buf + dram_start;
         sge.length = blk_size;
 
         //auto start = std::chrono::high_resolution_clock::now();
@@ -362,7 +371,7 @@ namespace rdma {
             // post max_post WR to the QP;
             for(int i = 0; i < max_post; i++) {
                 wr[i].opcode = IBV_WR_RDMA_WRITE;
-                wr[i].wr_id = finished + i;
+                wr[i].wr_id = qp_idx;
                 wr[i].num_sge = 1;
                 wr[i].sg_list = &sge;
 
@@ -378,18 +387,28 @@ namespace rdma {
 
                 wr[i].wr.rdma.rkey = ctx->remote_conn[i].rkey;
                 if (random) {
-                    size_t rd_off  = hrd_fastrand(&seed) % size_of_thread;
-                    if (size_of_thread - rd_off < blk_size) rd_off -= blk_size;
-                    wr[i].wr.rdma.remote_addr = ctx->remote_conn[qp_idx].addr + start + rd_off;
+                    // random write
+                    /*
+                     * 1. divide the total PM space into N blocks with granularity of block size;
+                     * 2. randomly choose a block in [0, N]
+                     * */
+                    assert(remote_block_num != 0);
+                    size_t rd_blk  = hrd_fastrand(&seed) % remote_block_num;
+                    wr[i].wr.rdma.remote_addr = ctx->remote_conn[qp_idx].addr + rd_blk * blk_size;
                 } else {
-                    wr[i].wr.rdma.remote_addr = ctx->remote_conn[qp_idx].addr + start + offset;
+                    wr[i].wr.rdma.remote_addr = ctx->remote_conn[qp_idx].addr + pm_start + offset;
                     offset += blk_size;
+#ifdef DEBUG
+                    fprintf(stdout, "[%d] write offset [%lu] = (base)[%lu] + (start)[%lu] + offset[%lu]\n",qp_idx,
+                            ctx->remote_conn[qp_idx].addr + pm_start + offset,
+                            ctx->remote_conn[qp_idx].addr, pm_start, offset);
+#endif
                 }
             }
             if (persist) {
                 read_sge.lkey = ctx->mr->lkey;
-                read_sge.addr = (uintptr_t)ctx->buf + 1024 * 1024;
-                read_sge.length = blk_size;
+                read_sge.addr = (uintptr_t)ctx->buf + dram_start;
+                read_sge.length = 0;
 
                 read_wr.opcode = IBV_WR_RDMA_READ;
                 read_wr.wr_id = 1;
@@ -405,10 +424,10 @@ namespace rdma {
             int ret = ibv_post_send(ctx->qps[qp_idx], wr, &bad);
 #ifdef DEBUG
             if (ret) {
-                fprintf(stderr, "post send[%ld] failed [%d] [%s]\n",finished, ret, strerror(errno));
+                fprintf(stdout, "post send[%ld] failed [%d] [%s]\n",finished, ret, strerror(errno));
             }
             if (bad != nullptr)  {
-                fprintf(stderr, "bad wr [%ld] failed [%d] [%s]\n",finished, ret, strerror(errno));
+                fprintf(stdout, "bad wr [%ld] failed [%d] [%s]\n",finished, ret, strerror(errno));
             }
 #endif
             posted_wr += max_post;
@@ -416,8 +435,8 @@ namespace rdma {
                 poll_cq(ctx->cqs[qp_idx], 1);
             }
 
-            if (finished % 10000 == 0) {
-                fprintf(stdout, "finished %ld\r", finished);
+            if (finished % 1000000 == 0) {
+                fprintf(stdout, "finished %ld\n", finished);
                 fflush(stdout);
             }
         }

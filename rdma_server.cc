@@ -395,6 +395,11 @@ namespace rdma {
                     assert(remote_block_num != 0);
                     size_t rd_blk  = hrd_fastrand(&seed) % remote_block_num;
                     wr[i].wr.rdma.remote_addr = ctx->remote_conn[qp_idx].addr + rd_blk * blk_size;
+#ifdef DEBUG
+                    fprintf(stdout, "[%d] write offset [%lu] = (base)[%lu] + (rd_block)[%lu] * blk_size[%lu]\n",qp_idx,
+                            ctx->remote_conn[qp_idx].addr + pm_start + blk_size,
+                            ctx->remote_conn[qp_idx].addr, rd_blk, blk_size);
+#endif
                 } else {
                     wr[i].wr.rdma.remote_addr = ctx->remote_conn[qp_idx].addr + pm_start + offset;
                     offset += blk_size;

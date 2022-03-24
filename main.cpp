@@ -43,7 +43,7 @@ int main(int argc, char** argv) {
         }
     } else {
         // For client, new a 1GB buffer, and set the size of remote buffer
-        rdma::pmem_size = 64UL * 1024 * 1024 * 1024;
+        rdma::pmem_size = 62UL * 1024 * 1024 * 1024;
         buf = new char[rdma::CLIENT_BUF_SIZE];
     }
 

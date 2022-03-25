@@ -17,8 +17,13 @@ namespace rdma {
         if (raw == nullptr) {
             fprintf(stderr, "Map pmem file failed\n");
         }
+
         printf("map pmem file [%ld] GB\n", mapped_size / 1024 / 1024 / 1024);
         return raw;
+    }
+
+    void zero_mapped_file(char* raw){
+        pmem_memset_persist(raw, 0, pmem_size);
     }
 
     void unmap_file(char* raw) {

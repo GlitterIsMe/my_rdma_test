@@ -69,9 +69,16 @@ namespace rdma {
                                   size_t max_bacth, size_t max_post,
                                   bool random);*/
 
-        static void WriteThroughputBench(RDMA_Context* ctx, int threads, int qp_idx, size_t total_ops,
-                                  size_t blk_size, size_t max_bacth,
-                                  size_t max_post, bool random, bool persist);
+        static void WriteThroughputBench(RDMA_Context* ctx, int threads,
+                                         int qp_idx, size_t total_ops,
+                                  size_t blk_size, size_t max_batch,
+                                  size_t max_post, bool random,
+                                  bool persist);
+
+        static void CASThroughputBench(RDMA_Context* ctx, int threads,
+                                       int qp_idx, size_t total_ops,
+                                       size_t max_batch, size_t max_post,
+                                       bool random, bool persist);
 
     private:
 

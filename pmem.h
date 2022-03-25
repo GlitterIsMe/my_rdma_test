@@ -14,6 +14,8 @@ namespace rdma {
 
     char* map_pmem_file(const std::string pmem_path);
 
+    void zero_mapped_file(char* raw);
+
     void unmap_file(char* raw);
 }
 

@@ -13,6 +13,10 @@
 #include "util.h"
 #include "pmem.h"
 
+#define likely(x) __builtin_expect(!!(x), 1)
+
+#define PERSIST_EACH_WRITE
+
 namespace rdma {
 
     void InitRDMAContext(rdma::RDMA_Context* ctx, int num_qp, char* buf, size_t buf_size) {
@@ -20,7 +24,9 @@ namespace rdma {
         struct ibv_device** dev_list = ibv_get_device_list(&dev_num);
         std::cout << "Find " << dev_num << " RDMA devices" << std::endl;
 
-        ctx->ib_ctx = ibv_open_device(dev_list[0]);
+        int dev = 0;
+        ctx->ib_ctx = ibv_open_device(dev_list[dev]);
+        std::cout << "Use RDMA device [" << dev << "]\n";
 
         ibv_free_device_list(dev_list);
 
@@ -29,7 +35,7 @@ namespace rdma {
         ibv_query_port(ctx->ib_ctx, 1, &ctx->port_attr);
 
         ctx->buf = buf;
-        memset(ctx->buf, 0, buf_size);
+        //memset(ctx->buf, 0, buf_size);
         std::cout << "Register memory region [" << buf_size / 1024.0 / 1024 / 1024 << "] GB\n";
         ctx->mr = ibv_reg_mr(ctx->pd, ctx->buf, buf_size, IBV_ACCESS_LOCAL_WRITE |
                                                       IBV_ACCESS_REMOTE_READ |
@@ -50,7 +56,7 @@ namespace rdma {
         ctx->qps = new struct ibv_qp*[num_qp];
 
         for (int i = 0; i < num_qp; ++i) {
-            ctx->cqs[i] = ibv_create_cq(ctx->ib_ctx, 256,
+            ctx->cqs[i] = ibv_create_cq(ctx->ib_ctx, 64,
                                         nullptr, nullptr,
                                         0);
             struct ibv_qp_init_attr qp_init_attr;
@@ -58,8 +64,8 @@ namespace rdma {
             qp_init_attr.qp_type = IBV_QPT_RC;
             qp_init_attr.send_cq = ctx->cqs[i];
             qp_init_attr.recv_cq = ctx->cqs[i];
-            qp_init_attr.cap.max_send_wr = 4096;
-            qp_init_attr.cap.max_recv_wr = 4096;
+            qp_init_attr.cap.max_send_wr = 512;
+            qp_init_attr.cap.max_recv_wr = 512;
             qp_init_attr.cap.max_send_sge = 1;
             qp_init_attr.cap.max_recv_sge = 1;
             qp_init_attr.sq_sig_all = 0;
@@ -259,15 +265,17 @@ namespace rdma {
     }
 
     void Server::poll_cq(struct ibv_cq* cq, int num_comps) {
-        struct ibv_wc wc;
+        struct ibv_wc wc[num_comps];
         int res = 0, total_comp = 0;
         while (total_comp < num_comps) {
-            res = ibv_poll_cq(cq, num_comps, &wc);
+            res = ibv_poll_cq(cq, num_comps, wc);
             if (res > 0) {
 //#ifdef DEBUG
-                if (wc.status != IBV_WC_SUCCESS) {
-                    fprintf(stdout, "failed request [%ld] [0x%x]\n", wc.wr_id, wc.status);
-                    exit(-1);
+                for (int i = 0; i < res; ++i) {
+                    if (wc[i].status != IBV_WC_SUCCESS) {
+                        fprintf(stdout, "failed request [%ld] [0x%x]\n", wc[i].wr_id, wc[i].status);
+                        exit(-1);
+                    }
                 }
 //#endif
                 total_comp += res;
@@ -275,7 +283,7 @@ namespace rdma {
         }
     }
     /*void Server::WriteThroughputBench(size_t total_ops, size_t blk_size, size_t max_bacth, size_t max_post, bool random) {
-        *//*std::cout << "Run RDMA Write Benchmark: \n"
+        std::cout << "Run RDMA Write Benchmark: \n"
                     << "Total ops: " << total_ops << "\n"
                     << "Block size: " << blk_size << "\n"
                     << "Max batch: " << max_bacth << "\n"
@@ -332,7 +340,7 @@ namespace rdma {
         uint64_t us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
         std::cout << "Run time: " << us << " us\n";
         std::cout << "IOPS: " << (double)total_ops / us * 1000000 / 1000 << "KOPS\n";
-        std::cout << "Throughput: " << (total_ops * blk_size / 1024 / 1024.0) / us * 1000000 << "MB/s\n";*//*
+        std::cout << "Throughput: " << (total_ops * blk_size / 1024 / 1024.0) / us * 1000000 << "MB/s\n";
     }*/
 
         /*
@@ -343,16 +351,26 @@ namespace rdma {
     void Server::WriteThroughputBench(RDMA_Context* ctx, int threads, int qp_idx,
                                       size_t total_ops, size_t blk_size, size_t max_batch,
                                       size_t max_post, bool random, bool persist) {
+#ifdef DEBUG
         std::cout << "thread [" << std::this_thread::get_id() << "], idx [" << qp_idx << "] start process\n";
+#endif
         ibv_send_wr wr[max_post], *bad = nullptr;
+        ibv_sge sge[max_post];
+#ifdef PERSIST_EACH_WRITE
+        ibv_send_wr read_wr[max_post];
+        ibv_sge read_sge[max_post];
+#else
         ibv_send_wr read_wr;
-        ibv_sge sge[max_post], read_sge;
+        ibv_sge read_sge;
+#endif
         size_t local_pm_size = pmem_size / threads;
         size_t local_dram_size = CLIENT_BUF_SIZE / threads;
         size_t pm_start = qp_idx * local_pm_size;
         size_t dram_start = qp_idx * local_dram_size;
+#ifdef DEBUG
         std::cout << "PM start " << pm_start << "\n";
         std::cout << "DRAM start " << dram_start << "\n";
+#endif
         size_t posted_wr = 0;
         size_t offset = 0;
         size_t finished = 0;
@@ -369,25 +387,33 @@ namespace rdma {
             for(int i = 0; i < max_post; i++) {
 
                 sge[i].lkey = ctx->mr->lkey;
-                sge[i].addr = (uintptr_t)ctx->buf + dram_start;
+                sge[i].addr = (uintptr_t)ctx->buf + dram_start + i * blk_size;
                 sge[i].length = blk_size;
 
                 wr[i].opcode = IBV_WR_RDMA_WRITE;
                 wr[i].wr_id = finished + i;
                 wr[i].num_sge = 1;
                 wr[i].sg_list = &sge[i];
-
+#ifdef PERSIST_EACH_WRITE
+                wr[i].next = &read_wr[i];
+#else
                 if (i < max_post - 1) {
                     wr[i].next = &wr[i+1];
                 } else {
                     wr[i].next = nullptr;
                 }
+#endif
 
-                if (!persist && posted_wr % max_batch == 0) {
+#ifndef PERSIST_EACH_WRITE
+                if (posted_wr % max_batch == 0) {
                     wr[i].send_flags = IBV_SEND_SIGNALED;
+                    if (likely(finished > 0)) {
+                        poll_cq(ctx->cqs[qp_idx], 1);
+                    }
                 }
+#endif
 
-                wr[i].wr.rdma.rkey = ctx->remote_conn[i].rkey;
+                wr[i].wr.rdma.rkey = ctx->remote_conn[qp_idx].rkey;
                 if (random) {
                     // random write
                     /*
@@ -398,7 +424,7 @@ namespace rdma {
                     size_t rd_blk  = hrd_fastrand(&seed) % remote_block_num;
                     wr[i].wr.rdma.remote_addr = ctx->remote_conn[qp_idx].addr + rd_blk * blk_size;
 #ifdef DEBUG
-                    fprintf(stdout, "[%d] write offset [%lu] = (base)[%lu] + (rd_block)[%lu] * blk_size[%lu]\n",wr[i].wr_id,
+                    fprintf(stdout, "[%d] write offset [%lu] = (base)[%p] + (rd_block)[%p] * blk_size[%lu]\n",wr[i].wr_id,
                             ctx->remote_conn[qp_idx].addr + pm_start + blk_size,
                             ctx->remote_conn[qp_idx].addr, rd_blk, blk_size);
 #endif
@@ -406,12 +432,46 @@ namespace rdma {
                     wr[i].wr.rdma.remote_addr = ctx->remote_conn[qp_idx].addr + pm_start + offset;
                     offset += blk_size;
 #ifdef DEBUG
-                    fprintf(stdout, "[%d] write offset [%lu] = (base)[%lu] + (start)[%lu] + offset[%lu]\n",wr[i].wr_id,
+                    fprintf(stdout, "[%d] write offset [%lu] = (base)[%p] + (start)[%lu] + offset[%lu]\n",wr[i].wr_id,
                             ctx->remote_conn[qp_idx].addr + pm_start + offset,
                             ctx->remote_conn[qp_idx].addr, pm_start, offset);
 #endif
                 }
+#ifdef DEBUG
+                fprintf(stdout, "wr[%d] id [%d], offset [%p], size [%d], next[%p]\n", i, wr[i].wr_id, wr[i].wr.rdma.remote_addr, blk_size, wr[i].next);
+#endif
+
+#ifdef PERSIST_EACH_WRITE
+                if (persist) {
+                    read_sge[i].lkey = ctx->mr->lkey;
+                    read_sge[i].addr = (uintptr_t)ctx->buf + dram_start;
+                    read_sge[i].length = 0;
+
+                    read_wr[i].opcode = IBV_WR_RDMA_READ;
+                    read_wr[i].wr_id = 1;
+                    read_wr[i].num_sge = 1;
+                    read_wr[i].sg_list = &read_sge[i];
+                    if (i < max_post - 1) {
+                        read_wr[i].next = &wr[i+1];
+                    } else {
+                        read_wr[i].next = nullptr;
+                    }
+                    //read_wr[i].next = nullptr;
+                    read_wr[i].send_flags = IBV_SEND_SIGNALED;
+
+                    if (likely(finished > 0)) {
+                        poll_cq(ctx->cqs[qp_idx], 1);
+                    }
+
+                    read_wr[i].wr.rdma.rkey = ctx->remote_conn[qp_idx].rkey;
+                    read_wr[i].wr.rdma.remote_addr = wr[max_post - 1].wr.rdma.remote_addr;
+
+                    wr[max_post - 1].next = &read_wr[i];
+                }
+#endif
+
             }
+#ifndef PERSIST_EACH_WRITE
             if (persist) {
                 read_sge.lkey = ctx->mr->lkey;
                 read_sge.addr = (uintptr_t)ctx->buf + dram_start;
@@ -428,19 +488,25 @@ namespace rdma {
 
                 wr[max_post - 1].next = &read_wr;
             }
+#endif
+
             int ret = ibv_post_send(ctx->qps[qp_idx], wr, &bad);
 #ifdef DEBUG
             if (ret) {
                 fprintf(stdout, "post send[%ld] failed [%d] [%s]\n",finished, ret, strerror(errno));
+                exit(-1);
             }
             if (bad != nullptr)  {
                 fprintf(stdout, "bad wr [%ld] failed [%d] [%s]\n",finished, ret, strerror(errno));
             }
 #endif
             posted_wr += max_post;
-            if (posted_wr % max_batch == 0 && posted_wr > 0) {
+
+#ifndef PERSIST_EACH_WRITE
+            if (persist) {
                 poll_cq(ctx->cqs[qp_idx], 1);
             }
+#endif
 
             if (finished % 10000 == 0) {
                 fprintf(stdout, "finished %ld\r", finished);

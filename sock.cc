@@ -25,7 +25,7 @@ namespace sock {
         if (is_server) {
             int bind_res = bind(local_sock, (struct sockaddr*)(&server_addr), sizeof(server_addr));
             if (bind_res != 0) {
-                fprintf(stderr, "bind failed\n");
+                fprintf(stderr, "bind failed [%s]\n", strerror(errno));
                 exit(-1);
             }
             printf("bind local sock %d with ip %s\n", local_sock, ip.c_str());

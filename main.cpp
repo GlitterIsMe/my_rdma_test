@@ -82,7 +82,7 @@ int main(int argc, char** argv) {
             // Using PM, mmap the pmem, the mapped size is stored in rdma::mapped_size;
             rdma::pmem_size = 0;
             buf = rdma::map_pmem_file(FLAGS_pmem_path.c_str());
-            rdma::pmem_size = rdma::mapped_size;
+            rdma::pmem_size = FLAGS_pmem_size * 1024 * 1024;
             if (FLAGS_benchmark == "cas") {
                 rdma::zero_mapped_file(buf);
             }
@@ -93,7 +93,7 @@ int main(int argc, char** argv) {
     } else {
         // For client, new a 1GB buffer, and set the size of remote buffer
         // Requiring modifying manually;
-        rdma::pmem_size = 63UL * 1024 * 1024 * 1024;
+        rdma::pmem_size = FLAGS_pmem_size * 1024 * 1024;;
         buf = new char[rdma::CLIENT_BUF_SIZE];
     }
 
@@ -114,7 +114,7 @@ int main(int argc, char** argv) {
     }
 
     rdma::Server server(&ctx, FLAGS_is_server);
-    sock::connect_sock(FLAGS_is_server, FLAGS_addr, 34602);
+    sock::connect_sock(FLAGS_is_server, FLAGS_addr, 35700);
     server.InitConnection();
 
     /*

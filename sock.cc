@@ -59,8 +59,10 @@ namespace sock {
             write(local_sock, send_buf, send_size);
             //printf("client write\n");
             read(local_sock, recv_buf, recv_size);
-            //printf("client read\n");
-            //printf("[%lu]%s\n",strlen(recv_buf), recv_buf);
+            /*if (recv_size == 1) {
+                printf("client read [%c]\n", recv_buf[0]);
+            }
+            printf("client read %lu\n", recv_size);*/
         }
         return 0;
     }

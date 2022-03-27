@@ -42,7 +42,7 @@ namespace rdma {
                                                       IBV_ACCESS_REMOTE_WRITE |
                                                       IBV_ACCESS_REMOTE_ATOMIC);
         if (ctx->mr == nullptr) {
-            fprintf(stderr, "Register memory failed\n");
+            fprintf(stderr, "Register memory failed [%s]\n", strerror(errno));
         } else {
             printf("register memory success\n");
         }
@@ -122,9 +122,6 @@ namespace rdma {
         std::cout << "Exchange QP info and connect\n";
         sock::exchange_message(is_server_, (char*)&local_con, sizeof(con_data_t), (char*)remote_conn, sizeof(con_data_t));
 
-        char tmp;
-        char sync = 's';
-        sock::exchange_message(is_server_, &sync, 1, &tmp, 1);
 #ifdef DEBUG
         std::cout << "local qpn:" << local_con.qp_num << "\n"
                   << "lkey: " << local_con.rkey << "\n"
@@ -139,6 +136,11 @@ namespace rdma {
         modify_qp_to_init(qp);
         modify_qp_to_rtr(qp, remote_conn->qp_num, remote_conn->lid, remote_conn->gid);
         modify_qp_to_rts(qp);
+
+        // sync
+        char tmp;
+        char sync = 's';
+        sock::exchange_message(is_server_, &sync, 1, &tmp, 1);
     }
 
     void Server::modify_qp_to_init(struct ibv_qp* qp) {
@@ -387,7 +389,7 @@ namespace rdma {
             for(int i = 0; i < max_post; i++) {
 
                 sge[i].lkey = ctx->mr->lkey;
-                sge[i].addr = (uintptr_t)ctx->buf + dram_start + i * blk_size;
+                sge[i].addr = (uintptr_t)ctx->buf + dram_start;
                 sge[i].length = blk_size;
 
                 wr[i].opcode = IBV_WR_RDMA_WRITE;

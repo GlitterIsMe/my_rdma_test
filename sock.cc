@@ -18,6 +18,10 @@ namespace sock {
 
     int connect_sock(bool is_server, std::string ip, int port){
         local_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+
+        unsigned value = 1;
+        setsockopt(local_sock, SOL_SOCKET, SO_REUSEADDR, &value, sizeof(value));
+
         server_addr.sin_family = AF_INET;
         server_addr.sin_addr.s_addr = inet_addr(ip.c_str());
         server_addr.sin_port = htons(port);

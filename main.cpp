@@ -89,12 +89,16 @@ int main(int argc, char** argv) {
         } else {
             // Using DRAM, new buffer;
             buf = new char[FLAGS_pmem_size * 1024 * 1024];
+            if (FLAGS_benchmark == "cas") {
+                memset(buf, 0, FLAGS_pmem_size * 1024 * 1024);
+            }
         }
     } else {
         // For client, new a 1GB buffer, and set the size of remote buffer
         // Requiring modifying manually;
         rdma::pmem_size = FLAGS_pmem_size * 1024 * 1024;;
         buf = new char[rdma::CLIENT_BUF_SIZE];
+        memset(buf, 0, rdma::CLIENT_BUF_SIZE);
     }
 
     // Init RDMA resource

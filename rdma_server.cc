@@ -28,6 +28,12 @@ namespace rdma {
         ctx->ib_ctx = ibv_open_device(dev_list[dev]);
         std::cout << "Use RDMA device [" << dev << "]\n";
 
+
+            struct ibv_device_attr_ex ex_attr;
+            ibv_query_device_ex(ctx->ib_ctx, nullptr, &ex_attr);
+            printf("atomic: %lu\n", ex_attr.pci_atomic_caps.compare_swap);
+
+
         ibv_free_device_list(dev_list);
 
         ctx->pd = ibv_alloc_pd(ctx->ib_ctx);
@@ -56,7 +62,7 @@ namespace rdma {
         ctx->qps = new struct ibv_qp*[num_qp];
 
         for (int i = 0; i < num_qp; ++i) {
-            ctx->cqs[i] = ibv_create_cq(ctx->ib_ctx, 64,
+            ctx->cqs[i] = ibv_create_cq(ctx->ib_ctx, 512,
                                         nullptr, nullptr,
                                         0);
             struct ibv_qp_init_attr qp_init_attr;
@@ -64,8 +70,8 @@ namespace rdma {
             qp_init_attr.qp_type = IBV_QPT_RC;
             qp_init_attr.send_cq = ctx->cqs[i];
             qp_init_attr.recv_cq = ctx->cqs[i];
-            qp_init_attr.cap.max_send_wr = 512;
-            qp_init_attr.cap.max_recv_wr = 512;
+            qp_init_attr.cap.max_send_wr = 1024;
+            qp_init_attr.cap.max_recv_wr = 1024      ;
             qp_init_attr.cap.max_send_sge = 1;
             qp_init_attr.cap.max_recv_sge = 1;
             qp_init_attr.sq_sig_all = 0;
@@ -267,10 +273,14 @@ namespace rdma {
     }
 
     void Server::poll_cq(struct ibv_cq* cq, int num_comps) {
+#ifdef DEBUG
+        fprintf(stdout, "target poll %d comps\n", num_comps);
+#endif
         struct ibv_wc wc[num_comps];
         int res = 0, total_comp = 0;
         while (total_comp < num_comps) {
-            res = ibv_poll_cq(cq, num_comps, wc);
+            res = ibv_poll_cq(cq, 1, wc);
+            assert(res <= 1);
             if (res > 0) {
 //#ifdef DEBUG
                 for (int i = 0; i < res; ++i) {
@@ -282,7 +292,13 @@ namespace rdma {
 //#endif
                 total_comp += res;
             }
+/*#ifdef DEBUG
+            fprintf(stdout, "polled %d comps\n", total_comp);
+#endif*/
         }
+#ifdef DEBUG
+        fprintf(stdout, "finished total poll %d comps\n", total_comp);
+#endif
     }
     /*void Server::WriteThroughputBench(size_t total_ops, size_t blk_size, size_t max_bacth, size_t max_post, bool random) {
         std::cout << "Run RDMA Write Benchmark: \n"
@@ -425,23 +441,23 @@ namespace rdma {
                     assert(remote_block_num != 0);
                     size_t rd_blk  = hrd_fastrand(&seed) % remote_block_num;
                     wr[i].wr.rdma.remote_addr = ctx->remote_conn[qp_idx].addr + rd_blk * blk_size;
-#ifdef DEBUG
-                    fprintf(stdout, "[%d] write offset [%lu] = (base)[%p] + (rd_block)[%p] * blk_size[%lu]\n",wr[i].wr_id,
-                            ctx->remote_conn[qp_idx].addr + pm_start + blk_size,
+/*#ifdef DEBUG
+                    fprintf(stdout, "[Random Write] : [%d] write offset [%p] = (base)[%p] + (rd_block)[%p] * blk_size[%lu]\n",wr[i].wr_id,
+                            ctx->remote_conn[qp_idx].addr + rd_blk * blk_size,
                             ctx->remote_conn[qp_idx].addr, rd_blk, blk_size);
-#endif
+#endif*/
                 } else {
                     wr[i].wr.rdma.remote_addr = ctx->remote_conn[qp_idx].addr + pm_start + offset;
                     offset += blk_size;
 #ifdef DEBUG
-                    fprintf(stdout, "[%d] write offset [%lu] = (base)[%p] + (start)[%lu] + offset[%lu]\n",wr[i].wr_id,
+                    fprintf(stdout, "[Sequrntial Write] : [%d] write offset [%lu] = (base)[%p] + (start)[%lu] + offset[%lu]\n",wr[i].wr_id,
                             ctx->remote_conn[qp_idx].addr + pm_start + offset,
                             ctx->remote_conn[qp_idx].addr, pm_start, offset);
 #endif
                 }
-#ifdef DEBUG
+/*#ifdef DEBUG
                 fprintf(stdout, "wr[%d] id [%d], offset [%p], size [%d], next[%p]\n", i, wr[i].wr_id, wr[i].wr.rdma.remote_addr, blk_size, wr[i].next);
-#endif
+#endif*/
 
 #ifdef PERSIST_EACH_WRITE
                 if (persist) {
@@ -461,9 +477,9 @@ namespace rdma {
                     //read_wr[i].next = nullptr;
                     read_wr[i].send_flags = IBV_SEND_SIGNALED;
 
-                    if (likely(finished > 0)) {
-                        poll_cq(ctx->cqs[qp_idx], 1);
-                    }
+                    /*if (likely(finished > 0)) {
+                        poll_cq(ctx->cqs[qp_idx], max_post);
+                    }*/
 
                     read_wr[i].wr.rdma.rkey = ctx->remote_conn[qp_idx].rkey;
                     read_wr[i].wr.rdma.remote_addr = wr[max_post - 1].wr.rdma.remote_addr;
@@ -491,6 +507,13 @@ namespace rdma {
                 wr[max_post - 1].next = &read_wr;
             }
 #endif
+#ifdef DEBUG
+            int wr_num = 0;
+            for (ibv_send_wr* first = &wr[0]; first != nullptr; first = first->next) {
+                wr_num++;
+            }
+            assert(wr_num == max_post * 2);
+#endif
 
             int ret = ibv_post_send(ctx->qps[qp_idx], wr, &bad);
 #ifdef DEBUG
@@ -509,6 +532,8 @@ namespace rdma {
                 poll_cq(ctx->cqs[qp_idx], 1);
             }
 #endif
+
+            poll_cq(ctx->cqs[qp_idx], max_post);
 
             if (finished % 10000 == 0) {
                 fprintf(stdout, "finished %ld\r", finished);
@@ -553,18 +578,17 @@ namespace rdma {
                 wr[i].wr_id = qp_idx;
                 wr[i].num_sge = 1;
                 wr[i].sg_list = &sge;
-
                 if (i < max_post - 1) {
                     wr[i].next = &wr[i+1];
                 } else {
                     wr[i].next = nullptr;
                 }
-
-                if (!persist && posted_wr % max_batch == 0) {
+                /*if (!persist && posted_wr % max_batch == 0) {
                     wr[i].send_flags = IBV_SEND_SIGNALED;
-                }
+                }*/
+                wr[i].send_flags = IBV_SEND_SIGNALED;
 
-                wr[i].wr.atomic.rkey = ctx->remote_conn[i].rkey;
+                wr[i].wr.atomic.rkey = ctx->remote_conn[qp_idx].rkey;
                 if (random) {
                     // random write
                     /*
@@ -575,7 +599,7 @@ namespace rdma {
                     size_t rd_blk  = hrd_fastrand(&seed) % remote_block_num;
                     wr[i].wr.atomic.remote_addr = ctx->remote_conn[qp_idx].addr + rd_blk * blk_size;
 #ifdef DEBUG
-                    fprintf(stdout, "[%d] write offset [%lu] = (base)[%lu] + (rd_block)[%lu] * blk_size[%lu]\n",qp_idx,
+                    fprintf(stdout, "[Random Write]: qp [%d] write offset [%lu] = (base)[%lu] + (rd_block)[%lu] * blk_size[%lu]\n",qp_idx,
                             ctx->remote_conn[qp_idx].addr + pm_start + blk_size,
                             ctx->remote_conn[qp_idx].addr, rd_blk, blk_size);
 #endif
@@ -589,9 +613,9 @@ namespace rdma {
 #endif
                 }
                 wr[i].wr.atomic.compare_add = 0;
-                wr[i].wr.atomic.swap = 1;
+                wr[i].wr.atomic.swap = 0;
             }
-            if (persist) {
+            /*if (persist) {
                 read_sge.lkey = ctx->mr->lkey;
                 read_sge.addr = (uintptr_t)ctx->buf + dram_start;
                 read_sge.length = 0;
@@ -606,7 +630,7 @@ namespace rdma {
                 read_wr.wr.rdma.remote_addr = ctx->remote_conn[qp_idx].addr;
 
                 wr[max_post - 1].next = &read_wr;
-            }
+            }*/
             int ret = ibv_post_send(ctx->qps[qp_idx], wr, &bad);
 #ifdef DEBUG
             if (ret) {
@@ -617,9 +641,9 @@ namespace rdma {
             }
 #endif
             posted_wr += max_post;
-            if (posted_wr % max_batch == 0 && posted_wr > 0) {
-                poll_cq(ctx->cqs[qp_idx], 1);
-            }
+            //if (posted_wr % max_batch == 0 && posted_wr > 0) {
+            poll_cq(ctx->cqs[qp_idx], max_post);
+            //}
 
             if (finished % 10000 == 0) {
                 fprintf(stdout, "finished %ld\r", finished);

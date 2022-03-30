@@ -145,7 +145,7 @@ namespace rdma {
 
         // sync
         char tmp;
-        char sync = 's';
+        char sync = 'I';
         sock::exchange_message(is_server_, &sync, 1, &tmp, 1);
     }
 
@@ -173,7 +173,7 @@ namespace rdma {
         attr.dest_qp_num = remote_qpn; // IBV_QP_DEST_QPN
         attr.rq_psn = 0; // IBV_QP_RQ_PSN
         attr.max_dest_rd_atomic = 16; // IBV_QP_MAX_DEST_RD_ATOMIC
-        attr.min_rnr_timer = 12; // IBV_QP_MIN_RNR_TIMER
+        attr.min_rnr_timer = 30; // IBV_QP_MIN_RNR_TIMER
 
         attr.ah_attr.is_global = 1;
         attr.ah_attr.dlid = dlid;
@@ -651,5 +651,175 @@ namespace rdma {
             }
         }
         //std::cout << "thread " << qp_idx << " end process\n";
+    }
+
+    // process of client: post recv - post send - poll completion for send - poll completion for recv;
+    // RR store the buffer for incoming data;
+    // send buffer can be reused;
+    void Server::EchoThroughputBench_Client(RDMA_Context *ctx, int threads, int qp_idx,
+                                            size_t total_ops, size_t blk_size, size_t max_post) {
+        struct ibv_sge recv_sge[max_post], send_sge[max_post];
+        struct ibv_send_wr wr[max_post], *bad_wr = nullptr;
+        struct ibv_recv_wr rr[max_post], *bad_rr = nullptr;
+
+        size_t local_pm_size = pmem_size / threads;
+        size_t local_dram_size = CLIENT_BUF_SIZE / threads;
+        size_t pm_start = qp_idx * local_pm_size;
+        size_t dram_start = qp_idx * local_dram_size;
+
+        int finished = 0;
+
+        for (; finished < total_ops; ) {
+            for (int i = 0; i < max_post; ++i) {
+                recv_sge[i].length = blk_size;
+                recv_sge[i].addr = (uintptr_t)ctx->buf + i * blk_size;
+                recv_sge[i].lkey = ctx->mr->lkey;
+
+                rr[i].sg_list = &recv_sge[i];
+                rr[i].num_sge = 1;
+                rr[i].next = i < max_post - 1 ? &rr[i + 1] : nullptr;
+            }
+
+            int ret = ibv_post_recv(ctx->qps[qp_idx], rr, &bad_rr);
+
+            if (ret) {
+                fprintf(stderr, "client failed post recv [%s]\n", strerror(errno));
+            }
+
+            for (int i = 0; i < max_post; ++i) {
+                send_sge[i].length = blk_size;
+                send_sge[i].addr = (uintptr_t)ctx->buf + i * blk_size;
+                send_sge[i].lkey = ctx->mr->lkey;
+
+                wr[i].sg_list = &send_sge[i];
+                wr[i].num_sge = 1;
+                wr[i].next = i < max_post - 1 ? &wr[i + 1] : nullptr;
+                wr[i].opcode = IBV_WR_SEND;
+                if (i == max_post - 1) {
+                    wr[i].send_flags = IBV_SEND_SIGNALED;
+                }
+            }
+
+            ret = ibv_post_send(ctx->qps[qp_idx], wr, &bad_wr);
+            if (ret) {
+                fprintf(stderr, "client failed post send [%s]\n", strerror(errno));
+            }
+
+            // poll completion for send
+            poll_cq(ctx->cqs[qp_idx], 1);
+#ifdef DEBUG
+            printf("client poll send comp\n");
+#endif
+            // poll completion for recv
+            poll_cq(ctx->cqs[qp_idx], max_post);
+#ifdef DEBUG
+            printf("client poll recv comp\n");
+#endif
+
+            finished += max_post;
+
+            if (finished % 10000 == 0) {
+                fprintf(stdout, "finished %ld\r", finished);
+                fflush(stdout);
+            }
+        }
+    }
+
+    void
+    Server::EchoThroughputBench_Server(RDMA_Context *ctx, int threads, int qp_idx, size_t total_ops,
+                                       size_t blk_size, size_t max_post) {
+        struct ibv_sge recv_sge[max_post], send_sge;
+        struct ibv_send_wr wr, *bad_wr = nullptr;
+        struct ibv_recv_wr rr[max_post], *bad_rr = nullptr;
+
+        size_t local_pm_size = pmem_size / threads;
+        size_t local_dram_size = CLIENT_BUF_SIZE / threads;
+        size_t pm_start = qp_idx * local_pm_size;
+        size_t dram_start = qp_idx * local_dram_size;
+
+        int finished = 0;
+        static int init_count = 0;
+
+        for (int i = 0; i < max_post; ++i) {
+            recv_sge[i].length = blk_size;
+            recv_sge[i].addr = (uintptr_t)ctx->buf + i * blk_size;
+            recv_sge[i].lkey = ctx->mr->lkey;
+
+            rr[i].sg_list = &recv_sge[i];
+            rr[i].num_sge = 1;
+            rr[i].next = i < max_post - 1 ? &rr[i + 1] : nullptr;
+        }
+        int ret = ibv_post_recv(ctx->qps[qp_idx], rr, &bad_rr);
+        if (ret) {
+            fprintf(stderr, "server failed post recv [%s]\n", strerror(errno));
+        }
+
+        init_count++;
+        if (init_count == threads) {
+            char tmp;
+            char sync = 'c';
+            sock::exchange_message(true, &sync, 1, &tmp, 1);
+            sock::disconnect_sock(true);
+            printf("Server finished init, wait for client\n");
+        }
+
+#ifdef DEBUG
+        printf("server post %d recv wr to recv queue\n", max_post);
+#endif
+
+        while (finished < total_ops) {
+            // poll a recv
+            poll_cq(ctx->cqs[qp_idx], 1);
+
+#ifdef DEBUG
+            printf("server get request and process\n");
+#endif
+
+            struct ibv_recv_wr sup_rr;
+            struct ibv_sge sup_sge;
+            sup_sge.length = blk_size;
+            sup_sge.addr = (uintptr_t) ctx->buf;
+            sup_sge.lkey = ctx->mr->lkey;
+
+            sup_rr.sg_list = &sup_sge;
+            sup_rr.num_sge = 1;
+            sup_rr.next = nullptr;
+
+            // replenish a rr
+            ibv_post_recv(ctx->qps[qp_idx], &sup_rr, &bad_rr);
+
+#ifdef DEBUG
+            printf("server replenish a rr\n");
+#endif
+
+            send_sge.length = blk_size;
+            send_sge.addr = (uintptr_t) ctx->buf;
+            send_sge.lkey = ctx->mr->lkey;
+
+            wr.sg_list = &send_sge;
+            wr.num_sge = 1;
+            wr.next = nullptr;
+            wr.opcode = IBV_WR_SEND;
+            wr.send_flags = IBV_SEND_SIGNALED;
+
+            // post response;
+            ret = ibv_post_send(ctx->qps[qp_idx], &wr, &bad_wr);
+            if (ret) {
+                fprintf(stderr, "server failed post send [%s]\n", strerror(errno));
+            }
+
+#ifdef DEBUG
+            printf("server response\n");
+#endif
+
+            poll_cq(ctx->cqs[qp_idx], 1);
+
+            finished++;
+
+            if (finished % 10000 == 0) {
+                fprintf(stdout, "finished %ld\r", finished);
+                fflush(stdout);
+            }
+        }
     }
 };

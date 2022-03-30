@@ -80,6 +80,15 @@ namespace rdma {
                                        size_t max_batch, size_t max_post,
                                        bool random, bool persist);
 
+        static void EchoThroughputBench_Client(RDMA_Context* ctx, int threads,
+                                         int qp_idx, size_t total_ops,
+                                         size_t blk_size, size_t max_post);
+
+        static void EchoThroughputBench_Server(RDMA_Context* ctx, int threads,
+                                               int qp_idx, size_t total_ops,
+                                               size_t blk_size,
+                                               size_t max_post);
+
     private:
 
         void modify_qp_to_init(struct ibv_qp* qp);

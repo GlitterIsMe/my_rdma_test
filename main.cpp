@@ -73,6 +73,44 @@ void RunCAS(rdma::RDMA_Context* ctx, uint64_t block_size, uint64_t threads_num) 
     //std::cout << "[Finish] CAS Throughput: " << (FLAGS_ops * block_size / 1024 / 1024.0) / us * 1000000 << "MB/s\n";
 }
 
+void RunSend(rdma::RDMA_Context* ctx, uint64_t block_size, uint64_t threads_num) {
+    std::cout << "Running RDMA Send\n";
+    std::vector<std::thread> thrds;
+    auto start = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < threads_num; ++i) {
+        int qp_idx = i;
+        thrds.emplace_back(std::thread{rdma::Server::EchoThroughputBench_Client, ctx,
+                                       threads_num, qp_idx,
+                                       FLAGS_ops / threads_num, block_size, FLAGS_max_post_list});
+    }
+    for (int i = 0; i < threads_num; ++i) {
+        thrds[i].join();
+    }
+    auto end = std::chrono::high_resolution_clock::now();
+    uint64_t us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    std::cout << "[Finish] Run RDMA Send " << FLAGS_ops << " ops, time: " << us << " us\n";
+    std::cout << "[Finish] Send OPS: " << (double)FLAGS_ops / us * 1000000 / 1000 << "KOPS\n";
+}
+
+void RunRecv(rdma::RDMA_Context* ctx, uint64_t block_size, uint64_t threads_num) {
+    std::cout << "Running RDMA Recv\n";
+    std::vector<std::thread> thrds;
+    auto start = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < threads_num; ++i) {
+        int qp_idx = i;
+        thrds.emplace_back(std::thread{rdma::Server::EchoThroughputBench_Server, ctx,
+                                       threads_num, qp_idx,
+                                       FLAGS_ops / threads_num, block_size, FLAGS_max_post_list});
+    }
+    for (int i = 0; i < threads_num; ++i) {
+        thrds[i].join();
+    }
+    auto end = std::chrono::high_resolution_clock::now();
+    uint64_t us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    std::cout << "[Finish] Run RDMA Recv " << FLAGS_ops << " ops, time: " << us << " us\n";
+    std::cout << "[Finish] Recv OPS: " << (double)FLAGS_ops / us * 1000000 / 1000 << "KOPS\n";
+}
+
 int main(int argc, char** argv) {
     google::ParseCommandLineFlags(&argc, &argv, true);
     char* buf;
@@ -138,6 +176,12 @@ int main(int argc, char** argv) {
         bench_func = &RunWrite;
     } else if (FLAGS_benchmark == "cas") {
         bench_func = &RunCAS;
+    } else if (FLAGS_benchmark == "echo"){
+        if (FLAGS_is_server) {
+            bench_func = &RunRecv;
+        } else {
+            bench_func = &RunSend;
+        }
     }
 
     if (!FLAGS_is_server) {
@@ -160,15 +204,35 @@ int main(int argc, char** argv) {
                 }
             } else {
                 // use exactly thread number and block size
+                //printf("use exactly thread number and block size\n");
+                char tmp;
+                char sync = 'c';
+                sock::exchange_message(FLAGS_is_server, &sync, 1, &tmp, 1);
+                sock::disconnect_sock(FLAGS_is_server);
+                printf("receive sync signal[%c]\n", tmp);
+
                 std::vector<std::thread> thrds;
                 std::cout << "\n[Running benchmark] Thread: " << FLAGS_num_threads << ", Block size: " << FLAGS_block_size << "B\n";
                 bench_func(&ctx, FLAGS_block_size, FLAGS_num_threads);
             }
         }
+    } else {
+        printf("is server\n");
+        if (FLAGS_benchmark == "echo") {
+            //printf("server run recv\n");
+            bench_func(&ctx, FLAGS_block_size, FLAGS_num_threads);
+
+            /*char tmp;
+            char sync = 'c';
+            sock::exchange_message(FLAGS_is_server, &sync, 1, &tmp, 1);
+            sock::disconnect_sock(FLAGS_is_server);
+            printf("send sync signal[%c]\n", sync);*/
+
+        }
     }
 
     char tmp;
-    char sync = 's';
+    char sync = 't';
     sock::exchange_message(FLAGS_is_server, &sync, 1, &tmp, 1);
     sock::disconnect_sock(FLAGS_is_server);
 

@@ -10,7 +10,7 @@
 
 namespace rdma {
 
-    const uint64_t CLIENT_BUF_SIZE = 1024 * 1024;
+    const uint64_t CLIENT_BUF_SIZE = 1024UL * 1024 * 1024;
 
     struct con_data_t {
         uint64_t addr; // buffer addr
@@ -88,6 +88,8 @@ namespace rdma {
                                                int qp_idx, size_t total_ops,
                                                size_t blk_size,
                                                size_t max_post);
+
+        void PrePostRQ(size_t blk_size, size_t max_post);
 
     private:
 

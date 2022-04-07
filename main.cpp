@@ -208,8 +208,7 @@ int main(int argc, char** argv) {
                 char tmp;
                 char sync = 'c';
                 sock::exchange_message(FLAGS_is_server, &sync, 1, &tmp, 1);
-                sock::disconnect_sock(FLAGS_is_server);
-                printf("receive sync signal[%c]\n", tmp);
+                printf("[Sync Point] Client before run benchmark [%c]\n", tmp);
 
                 std::vector<std::thread> thrds;
                 std::cout << "\n[Running benchmark] Thread: " << FLAGS_num_threads << ", Block size: " << FLAGS_block_size << "B\n";
@@ -217,9 +216,14 @@ int main(int argc, char** argv) {
             }
         }
     } else {
-        printf("is server\n");
         if (FLAGS_benchmark == "echo") {
             //printf("server run recv\n");
+            server.PrePostRQ(FLAGS_block_size, FLAGS_max_post_list);
+            char tmp;
+            char sync = 'c';
+            sock::exchange_message(FLAGS_is_server, &sync, 1, &tmp, 1);
+            printf("[Sync Point] Server before run benchmark [%c]\n", tmp);
+
             bench_func(&ctx, FLAGS_block_size, FLAGS_num_threads);
 
             /*char tmp;
@@ -235,6 +239,7 @@ int main(int argc, char** argv) {
     char sync = 't';
     sock::exchange_message(FLAGS_is_server, &sync, 1, &tmp, 1);
     sock::disconnect_sock(FLAGS_is_server);
+    printf("[Sync Point] Disconnect [%c]\n", tmp);
 
     if (FLAGS_is_server) {
         if (FLAGS_use_pmem) {

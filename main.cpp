@@ -29,7 +29,7 @@ DEFINE_bool(persist, true, "Whether persist the RDMA write");
 
 const int kMaxThreadsNum = 33;
 
-void RunWrite(rdma::RDMA_Context* ctx, uint64_t block_size, uint64_t threads_num) {
+void RunWrite(rdma::RDMA_Context *ctx, uint64_t block_size, uint64_t threads_num) {
     std::cout << "Running RDMA Write\n";
     std::vector<std::thread> thrds;
     auto start = std::chrono::high_resolution_clock::now();
@@ -37,7 +37,7 @@ void RunWrite(rdma::RDMA_Context* ctx, uint64_t block_size, uint64_t threads_num
         int qp_idx = i;
         thrds.emplace_back(std::thread{rdma::Server::WriteThroughputBench, ctx, threads_num, qp_idx,
                                        FLAGS_ops / threads_num, block_size,
-                                       FLAGS_max_batch_signal,FLAGS_max_post_list,
+                                       FLAGS_max_batch_signal, FLAGS_max_post_list,
                                        FLAGS_random, FLAGS_persist});
     }
     for (int i = 0; i < threads_num; ++i) {
@@ -47,11 +47,11 @@ void RunWrite(rdma::RDMA_Context* ctx, uint64_t block_size, uint64_t threads_num
     uint64_t us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
     std::cout << "[Finish] Block size: " << block_size << " bytes\n";
     std::cout << "[Finish] Run RDMA write" << FLAGS_ops << " ops, time: " << us << " us\n";
-    std::cout << "[Finish] Write IOPS: " << (double)FLAGS_ops / us * 1000000 / 1000 << "KOPS\n";
+    std::cout << "[Finish] Write IOPS: " << (double) FLAGS_ops / us * 1000000 / 1000 << "KOPS\n";
     std::cout << "[Finish] Write Throughput: " << (FLAGS_ops * block_size / 1024 / 1024.0) / us * 1000000 << "MB/s\n";
 }
 
-void RunCAS(rdma::RDMA_Context* ctx, uint64_t block_size, uint64_t threads_num) {
+void RunCAS(rdma::RDMA_Context *ctx, uint64_t block_size, uint64_t threads_num) {
     std::cout << "Running RDMA CAS\n";
     std::vector<std::thread> thrds;
     auto start = std::chrono::high_resolution_clock::now();
@@ -59,7 +59,7 @@ void RunCAS(rdma::RDMA_Context* ctx, uint64_t block_size, uint64_t threads_num) 
         int qp_idx = i;
         thrds.emplace_back(std::thread{rdma::Server::CASThroughputBench, ctx, threads_num, qp_idx,
                                        FLAGS_ops / threads_num,
-                                       FLAGS_max_batch_signal,FLAGS_max_post_list,
+                                       FLAGS_max_batch_signal, FLAGS_max_post_list,
                                        FLAGS_random, FLAGS_persist});
     }
     for (int i = 0; i < threads_num; ++i) {
@@ -69,11 +69,11 @@ void RunCAS(rdma::RDMA_Context* ctx, uint64_t block_size, uint64_t threads_num) 
     uint64_t us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
     //std::cout << "[Finish] Block size: " << block_size << " bytes\n";
     std::cout << "[Finish] Run RDMA CAS " << FLAGS_ops << " ops, time: " << us << " us\n";
-    std::cout << "[Finish] CAS OPS: " << (double)FLAGS_ops / us * 1000000 / 1000 << "KOPS\n";
+    std::cout << "[Finish] CAS OPS: " << (double) FLAGS_ops / us * 1000000 / 1000 << "KOPS\n";
     //std::cout << "[Finish] CAS Throughput: " << (FLAGS_ops * block_size / 1024 / 1024.0) / us * 1000000 << "MB/s\n";
 }
 
-void RunSend(rdma::RDMA_Context* ctx, uint64_t block_size, uint64_t threads_num) {
+void RunSend(rdma::RDMA_Context *ctx, uint64_t block_size, uint64_t threads_num) {
     std::cout << "Running RDMA Send\n";
     std::vector<std::thread> thrds;
     auto start = std::chrono::high_resolution_clock::now();
@@ -89,10 +89,10 @@ void RunSend(rdma::RDMA_Context* ctx, uint64_t block_size, uint64_t threads_num)
     auto end = std::chrono::high_resolution_clock::now();
     uint64_t us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
     std::cout << "[Finish] Run RDMA Send " << FLAGS_ops << " ops, time: " << us << " us\n";
-    std::cout << "[Finish] Send OPS: " << (double)FLAGS_ops / us * 1000000 / 1000 << "KOPS\n";
+    std::cout << "[Finish] Send OPS: " << (double) FLAGS_ops / us * 1000000 / 1000 << "KOPS\n";
 }
 
-void RunRecv(rdma::RDMA_Context* ctx, uint64_t block_size, uint64_t threads_num) {
+void RunRecv(rdma::RDMA_Context *ctx, uint64_t block_size, uint64_t threads_num) {
     std::cout << "Running RDMA Recv\n";
     std::vector<std::thread> thrds;
     auto start = std::chrono::high_resolution_clock::now();
@@ -108,12 +108,12 @@ void RunRecv(rdma::RDMA_Context* ctx, uint64_t block_size, uint64_t threads_num)
     auto end = std::chrono::high_resolution_clock::now();
     uint64_t us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
     std::cout << "[Finish] Run RDMA Recv " << FLAGS_ops << " ops, time: " << us << " us\n";
-    std::cout << "[Finish] Recv OPS: " << (double)FLAGS_ops / us * 1000000 / 1000 << "KOPS\n";
+    std::cout << "[Finish] Recv OPS: " << (double) FLAGS_ops / us * 1000000 / 1000 << "KOPS\n";
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
     google::ParseCommandLineFlags(&argc, &argv, true);
-    char* buf;
+    char *buf;
     if (FLAGS_is_server) {
         // For server
         if (FLAGS_use_pmem) {
@@ -171,12 +171,12 @@ int main(int argc, char** argv) {
         printf("read from server: %s\n", read_buf);
     }*/
 
-    void (*bench_func)(rdma::RDMA_Context*, uint64_t, uint64_t);
+    void (*bench_func)(rdma::RDMA_Context *, uint64_t, uint64_t);
     if (FLAGS_benchmark == "write") {
         bench_func = &RunWrite;
     } else if (FLAGS_benchmark == "cas") {
         bench_func = &RunCAS;
-    } else if (FLAGS_benchmark == "echo"){
+    } else if (FLAGS_benchmark == "echo") {
         if (FLAGS_is_server) {
             bench_func = &RunRecv;
         } else {
@@ -211,7 +211,8 @@ int main(int argc, char** argv) {
                 printf("[Sync Point] Client before run benchmark [%c]\n", tmp);
 
                 std::vector<std::thread> thrds;
-                std::cout << "\n[Running benchmark] Thread: " << FLAGS_num_threads << ", Block size: " << FLAGS_block_size << "B\n";
+                std::cout << "\n[Running benchmark] Thread: " << FLAGS_num_threads << ", Block size: "
+                          << FLAGS_block_size << "B\n";
                 bench_func(&ctx, FLAGS_block_size, FLAGS_num_threads);
             }
         }

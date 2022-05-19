@@ -33,7 +33,8 @@ target_sources(rdma_server PUBLIC
         "rdma_server.cc"
         "sock.cc"
         "pmem.cc"
-        "util.h")
+        "util.h"
+        "histogram.cc")
 target_include_directories(rdma_server PUBLIC
         .
         ${IB_INCLUDE_DIRS}

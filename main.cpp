@@ -14,9 +14,9 @@ DEFINE_bool(is_server, true, "Is this instance a server or a client");
 DEFINE_int32(num_threads, 1, "The number of threads for benchmarks, also the numbers of qps");
 
 // Parameters for Server
-DEFINE_bool(use_pmem, false, "Use pmem");
-DEFINE_string(pmem_path, "/mnt/pmem/rdma", "The path to the pmem");
-DEFINE_uint64(pmem_size, 1024, "The size of the pmem file in MB");
+DEFINE_bool(use_pmem, true, "Use pmem");
+DEFINE_string(pmem_path, "/dev/dax0.3", "The path to the pmem");
+DEFINE_uint64(pmem_size, 32UL * 1024, "The size of the pmem file in MB");
 
 // Parameters for Client
 DEFINE_string(benchmark, "write", "the name of benchmarks, write or atomic");
@@ -32,19 +32,21 @@ const int kMaxThreadsNum = 33;
 void RunWrite(rdma::RDMA_Context *ctx, uint64_t block_size, uint64_t threads_num) {
     std::cout << "Running RDMA Write\n";
     std::vector<std::thread> thrds;
+    leveldb::Histogram hist;
     auto start = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < threads_num; ++i) {
         int qp_idx = i;
         thrds.emplace_back(std::thread{rdma::Server::WriteThroughputBench, ctx, threads_num, qp_idx,
                                        FLAGS_ops / threads_num, block_size,
                                        FLAGS_max_batch_signal, FLAGS_max_post_list,
-                                       FLAGS_random, FLAGS_persist});
+                                       FLAGS_random, FLAGS_persist, &hist});
     }
     for (int i = 0; i < threads_num; ++i) {
         thrds[i].join();
     }
     auto end = std::chrono::high_resolution_clock::now();
     uint64_t us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    printf("%s\n", hist.ToString().c_str());
     std::cout << "[Finish] Block size: " << block_size << " bytes\n";
     std::cout << "[Finish] Run RDMA write" << FLAGS_ops << " ops, time: " << us << " us\n";
     std::cout << "[Finish] Write IOPS: " << (double) FLAGS_ops / us * 1000000 / 1000 << "KOPS\n";

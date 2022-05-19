@@ -372,7 +372,7 @@ namespace rdma {
          * */
     void Server::WriteThroughputBench(RDMA_Context* ctx, int threads, int qp_idx,
                                       size_t total_ops, size_t blk_size, size_t max_batch,
-                                      size_t max_post, bool random, bool persist) {
+                                      size_t max_post, bool random, bool persist, leveldb::Histogram* hist) {
 #ifdef DEBUG
         std::cout << "thread [" << std::this_thread::get_id() << "], idx [" << qp_idx << "] start process\n";
 #endif
@@ -405,6 +405,7 @@ namespace rdma {
 
         //auto start = std::chrono::high_resolution_clock::now();
         for(; finished < total_ops; finished += max_post) {
+            auto start = std::chrono::high_resolution_clock::now();
             // post max_post WR to the QP;
             for(int i = 0; i < max_post; i++) {
 
@@ -538,6 +539,9 @@ namespace rdma {
 #endif
 
             poll_cq(ctx->cqs[qp_idx], max_post);
+            auto end = std::chrono::high_resolution_clock::now();
+            std::chrono::duration<double, std::micro> elapse = end - start;
+            hist->Add(elapse.count());
 
             if (finished % 10000 == 0) {
                 fprintf(stdout, "finished %ld\r", finished);

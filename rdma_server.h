@@ -6,7 +6,9 @@
 #define RDMA_RDMA_SERVER_H
 
 #include <vector>
+
 #include "infiniband/verbs.h"
+#include "histogram.h"
 
 namespace rdma {
 
@@ -73,7 +75,7 @@ namespace rdma {
                                          int qp_idx, size_t total_ops,
                                   size_t blk_size, size_t max_batch,
                                   size_t max_post, bool random,
-                                  bool persist);
+                                  bool persist, leveldb::Histogram* hist);
 
         static void CASThroughputBench(RDMA_Context* ctx, int threads,
                                        int qp_idx, size_t total_ops,

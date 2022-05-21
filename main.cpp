@@ -29,6 +29,54 @@ DEFINE_bool(persist, true, "Whether persist the RDMA write");
 
 const int kMaxThreadsNum = 33;
 
+void RunPwriteLatencyBench(rdma::Server* server, uint64_t block_size, uint64_t threads_num) {
+    std::cout << "Running RDMA Pwrite Latency Test\n";
+    std::vector<std::thread> thrds;
+    for (int i = 0; i < threads_num; ++i) {
+        int qp_idx = i;
+        /*thrds.emplace_back(std::thread{rdma::Server::PwriteLatency, server, threads_num, qp_idx,
+                                       FLAGS_ops / threads_num, block_size});*/
+        rdma::Server::LatencyBench(server, rdma::PwriteLat, threads_num, qp_idx, FLAGS_ops / threads_num, block_size);
+    }
+    std::cout << "Finishing RDMA Pwrite Latency Test\n";
+}
+
+void RunReadLatencyBench(rdma::Server* server, uint64_t block_size, uint64_t threads_num) {
+    std::cout << "Running RDMA Read Latency Test\n";
+    std::vector<std::thread> thrds;
+    for (int i = 0; i < threads_num; ++i) {
+        int qp_idx = i;
+        /*thrds.emplace_back(std::thread{rdma::Server::PwriteLatency, server, threads_num, qp_idx,
+                                       FLAGS_ops / threads_num, block_size});*/
+        rdma::Server::LatencyBench(server, rdma::ReadLat, threads_num, qp_idx, FLAGS_ops / threads_num, block_size);
+    }
+    std::cout << "Finishing RDMA Pwrite Latency Test\n";
+}
+
+void RunWriteLatencyBench(rdma::Server* server, uint64_t block_size, uint64_t threads_num) {
+    std::cout << "Running RDMA Write Latency Test\n";
+    std::vector<std::thread> thrds;
+    for (int i = 0; i < threads_num; ++i) {
+        int qp_idx = i;
+        /*thrds.emplace_back(std::thread{rdma::Server::PwriteLatency, server, threads_num, qp_idx,
+                                       FLAGS_ops / threads_num, block_size});*/
+        rdma::Server::LatencyBench(server, rdma::WriteLat, threads_num, qp_idx, FLAGS_ops / threads_num, block_size);
+    }
+    std::cout << "Finishing RDMA Pwrite Latency Test\n";
+}
+
+void RunCASLatencyBench(rdma::Server* server, uint64_t block_size, uint64_t threads_num) {
+    std::cout << "Running RDMA CAS Latency Test\n";
+    std::vector<std::thread> thrds;
+    for (int i = 0; i < threads_num; ++i) {
+        int qp_idx = i;
+        /*thrds.emplace_back(std::thread{rdma::Server::PwriteLatency, server, threads_num, qp_idx,
+                                       FLAGS_ops / threads_num, block_size});*/
+        rdma::Server::LatencyBench(server, rdma::CASLat, threads_num, qp_idx, FLAGS_ops / threads_num, block_size);
+    }
+    std::cout << "Finishing RDMA Pwrite Latency Test\n";
+}
+
 void RunWrite(rdma::RDMA_Context *ctx, uint64_t block_size, uint64_t threads_num) {
     std::cout << "Running RDMA Write\n";
     std::vector<std::thread> thrds;
@@ -123,13 +171,13 @@ int main(int argc, char **argv) {
             rdma::pmem_size = 0;
             buf = rdma::map_pmem_file(FLAGS_pmem_path.c_str());
             rdma::pmem_size = FLAGS_pmem_size * 1024 * 1024;
-            if (FLAGS_benchmark == "cas") {
+            if (FLAGS_benchmark == "cas" | FLAGS_benchmark == "cas_latency") {
                 rdma::zero_mapped_file(buf);
             }
         } else {
             // Using DRAM, new buffer;
             buf = new char[FLAGS_pmem_size * 1024 * 1024];
-            if (FLAGS_benchmark == "cas") {
+            if (FLAGS_benchmark == "cas" | FLAGS_benchmark == "cas_latency") {
                 memset(buf, 0, FLAGS_pmem_size * 1024 * 1024);
             }
         }
@@ -173,17 +221,25 @@ int main(int argc, char **argv) {
         printf("read from server: %s\n", read_buf);
     }*/
 
-    void (*bench_func)(rdma::RDMA_Context *, uint64_t, uint64_t);
+    void (*bench_func)(rdma::Server *, uint64_t, uint64_t);
     if (FLAGS_benchmark == "write") {
-        bench_func = &RunWrite;
+        //bench_func = &RunWrite;
     } else if (FLAGS_benchmark == "cas") {
-        bench_func = &RunCAS;
+        //bench_func = &RunCAS;
     } else if (FLAGS_benchmark == "echo") {
         if (FLAGS_is_server) {
-            bench_func = &RunRecv;
+            //bench_func = &RunRecv;
         } else {
-            bench_func = &RunSend;
+            //bench_func = &RunSend;
         }
+    } else if (FLAGS_benchmark == "pwrite_latency") {
+        bench_func = &RunPwriteLatencyBench;
+    } else if (FLAGS_benchmark == "read_latency") {
+        bench_func = &RunReadLatencyBench;
+    } else if (FLAGS_benchmark == "write_latency") {
+        bench_func = &RunWriteLatencyBench;
+    } else if (FLAGS_benchmark == "cas_latency") {
+        bench_func = &RunCASLatencyBench;
     }
 
     if (!FLAGS_is_server) {
@@ -194,7 +250,7 @@ int main(int argc, char **argv) {
             } else {
                 for (int blk = 8; blk < 1024 * 16; blk *= 2) {
                     std::cout << "\n[Running benchmark] Block size: " << blk << " B\n";
-                    bench_func(&ctx, blk, FLAGS_num_threads);
+                    bench_func(&server, blk, FLAGS_num_threads);
                 }
             }
         } else {
@@ -202,20 +258,15 @@ int main(int argc, char **argv) {
                 // Iterator on thread numbers
                 for (int thrd_n = 1; thrd_n < kMaxThreadsNum; thrd_n *= 2) {
                     std::cout << "\n[Running benchmark] Threads num: " << thrd_n << "\n";
-                    bench_func(&ctx, FLAGS_block_size, thrd_n);
+                    bench_func(&server, FLAGS_block_size, thrd_n);
                 }
             } else {
                 // use exactly thread number and block size
                 //printf("use exactly thread number and block size\n");
-                char tmp;
-                char sync = 'c';
-                sock::exchange_message(FLAGS_is_server, &sync, 1, &tmp, 1);
-                printf("[Sync Point] Client before run benchmark [%c]\n", tmp);
-
                 std::vector<std::thread> thrds;
                 std::cout << "\n[Running benchmark] Thread: " << FLAGS_num_threads << ", Block size: "
                           << FLAGS_block_size << "B\n";
-                bench_func(&ctx, FLAGS_block_size, FLAGS_num_threads);
+                bench_func(&server, FLAGS_block_size, FLAGS_num_threads);
             }
         }
     } else {
@@ -227,7 +278,7 @@ int main(int argc, char **argv) {
             sock::exchange_message(FLAGS_is_server, &sync, 1, &tmp, 1);
             printf("[Sync Point] Server before run benchmark [%c]\n", tmp);
 
-            bench_func(&ctx, FLAGS_block_size, FLAGS_num_threads);
+            bench_func(&server, FLAGS_block_size, FLAGS_num_threads);
 
             /*char tmp;
             char sync = 'c';

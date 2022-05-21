@@ -14,6 +14,13 @@ namespace rdma {
 
     const uint64_t CLIENT_BUF_SIZE = 1024UL * 1024 * 1024;
 
+    enum BenchType {
+        ReadLat,
+        WriteLat,
+        PwriteLat,
+        CASLat,
+    };
+
     struct con_data_t {
         uint64_t addr; // buffer addr
         uint32_t rkey; //remote key
@@ -58,14 +65,18 @@ namespace rdma {
             is_server_(is_server),
             buf_(buf),
             num_qp_(num_qp){};*/
-        explicit Server(RDMA_Context* ctx, bool is_server): ctx_(ctx), is_server_(is_server) {};
+        explicit Server(RDMA_Context* ctx, bool is_server): ctx_(ctx), is_server_(is_server) {histogram.Clear();};
         ~Server() =default;
 
         void InitConnection();
 
-        size_t Write(const char* payload, size_t pld_size);
+        void Write(int qp_idx, char* src, size_t src_len, char* dest);
 
-        size_t Read(char* buffer, size_t bf_size);
+        void Read(int qp_idx, char* src, size_t src_len, char* dest);
+
+        void Pwrite(int qp_idx, char* src, size_t src_len, char* dest);
+
+        bool CAS(int qp_idx, char* src, char* dest, uint64_t old_v, uint64_t new_v);
 
         /*void WriteThroughputBench(size_t total_ops, size_t blk_size,
                                   size_t max_bacth, size_t max_post,
@@ -91,6 +102,9 @@ namespace rdma {
                                                size_t blk_size,
                                                size_t max_post);
 
+        static void LatencyBench(Server* server, BenchType type, int threads, int qp_idx, size_t total_ops,
+                                  size_t blk_size);
+
         void PrePostRQ(size_t blk_size, size_t max_post);
 
     private:
@@ -104,6 +118,7 @@ namespace rdma {
         static void poll_cq(struct ibv_cq* cq, int num_comps);
 
         RDMA_Context* ctx_;
+        leveldb::Histogram histogram;
         const bool is_server_{false};
     };
 }

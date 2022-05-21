@@ -115,8 +115,8 @@ namespace leveldb {
         r.append("------------------------------------------------------\n");
         const double mult = 100.0 / num_;
         double sum = 0;
-        //for (int b = 0; b < kNumBuckets; b++) {
-        for (int b = 0; b < 25; b++) {
+        for (int b = 0; b < kNumBuckets; b++) {
+        //for (int b = 0; b < 25; b++) {
             if (buckets_[b] <= 0.0) continue;
             sum += buckets_[b];
             snprintf(buf, sizeof(buf),

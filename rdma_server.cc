@@ -7,8 +7,10 @@
 #include <chrono>
 #include <thread>
 #include <cassert>
+#include <unistd.h>
 
 #include "rdma_server.h"
+#include "histogram.h"
 #include "sock.h"
 #include "util.h"
 #include "pmem.h"
@@ -216,61 +218,230 @@ namespace rdma {
         printf("Transfer QP to rts[%d]\n", res);
     }
 
-    size_t Server::Write(const char *payload, size_t pld_size) {
-        for (int i = 0; i < ctx_->num_qp; ++i) {
-            struct ibv_send_wr wr;
-            struct ibv_sge sge;
-            struct ibv_send_wr *bad;
+    void Server::Write(int qp_idx, char* src, size_t src_len, char* dest) {
+        struct ibv_send_wr write_wr;
+        struct ibv_sge sge;
+        struct ibv_send_wr *bad;
 
-            sge.addr = (uintptr_t) ctx_->buf;
-            sge.length = pld_size;
-            sge.lkey = ctx_->mr->lkey;
+        sge.addr = (uintptr_t) src;
+        sge.length = src_len;
+        sge.lkey = ctx_->mr->lkey;
 
-            memcpy(ctx_->buf, payload, pld_size);
+        write_wr.wr_id = 0;
+        write_wr.sg_list = &sge;
+        write_wr.num_sge = 1;
+        write_wr.opcode = IBV_WR_RDMA_WRITE;
+        write_wr.send_flags = IBV_SEND_SIGNALED;
 
-            wr.next = nullptr;
-            wr.wr_id = 0;
-            wr.sg_list = &sge;
-            wr.num_sge = 1;
-            wr.opcode = IBV_WR_RDMA_WRITE;
-            wr.send_flags = IBV_SEND_SIGNALED;
+        write_wr.wr.rdma.remote_addr = (uintptr_t)dest;
+        write_wr.wr.rdma.rkey = ctx_->remote_conn[qp_idx].rkey;
 
-            wr.wr.rdma.remote_addr = ctx_->remote_conn[i].addr;
-            wr.wr.rdma.rkey = ctx_->remote_conn[i].rkey;
+        write_wr.next = nullptr;
 
-            int res = ibv_post_send(ctx_->qps[i], &wr, &bad);
-            printf("post write requests[%d]\n", res);
-            poll_cq(ctx_->cqs[i], 1);
+        int ret = ibv_post_send(ctx_->qps[qp_idx], &write_wr, &bad);
+        if (ret) {
+            fprintf(stdout, "post send failed [%d] [%s]\n", ret, strerror(errno));
+            fprintf(stdout, "wr id [%d]\n", bad->wr_id);
+            fprintf(stdout, "sge offset: %lu\n", sge.addr);
+            exit(-1);
         }
-        return 0;
+        poll_cq(ctx_->cqs[qp_idx], 1);
     }
 
-    size_t Server::Read(char *buffer, size_t bf_size) {
-        for (int i = 0; i < ctx_->num_qp; ++i) {
-            struct ibv_send_wr wr;
-            struct ibv_sge sge;
-            struct ibv_send_wr *bad;
+    void Server::Read(int qp_idx, char* src, size_t src_len, char* dest) {
+        struct ibv_send_wr write_wr;
+        struct ibv_sge sge;
+        struct ibv_send_wr *bad;
 
-            sge.addr = (uintptr_t)ctx_->buf;
-            sge.length = 1024;
-            sge.lkey = ctx_->mr->lkey;
+        sge.addr = (uintptr_t) src;
+        sge.length = src_len;
+        sge.lkey = ctx_->mr->lkey;
 
-            wr.next = nullptr;
-            wr.wr_id = 0;
-            wr.sg_list = &sge;
-            wr.num_sge = 1;
-            wr.opcode = IBV_WR_RDMA_READ;
-            wr.send_flags = IBV_SEND_SIGNALED;
+        write_wr.wr_id = 0;
+        write_wr.sg_list = &sge;
+        write_wr.num_sge = 1;
+        write_wr.opcode = IBV_WR_RDMA_READ;
+        write_wr.send_flags = IBV_SEND_SIGNALED;
 
-            wr.wr.rdma.remote_addr = ctx_->remote_conn[i].addr;
-            wr.wr.rdma.rkey = ctx_->remote_conn[i].rkey;
+        write_wr.wr.rdma.remote_addr = (uintptr_t)dest;
+        write_wr.wr.rdma.rkey = ctx_->remote_conn[qp_idx].rkey;
 
-            int res = ibv_post_send(ctx_->qps[i], &wr, &bad);
-            printf("post read requests[%d]\n", res);
-            poll_cq(ctx_->cqs[i], 1);
-            memcpy(buffer, ctx_->buf, 1024);
+        write_wr.next = nullptr;
+
+        int ret = ibv_post_send(ctx_->qps[qp_idx], &write_wr, &bad);
+        if (ret) {
+            fprintf(stdout, "post send failed [%d] [%s]\n", ret, strerror(errno));
+            fprintf(stdout, "wr id [%d]\n", bad->wr_id);
+            fprintf(stdout, "sge offset: %lu\n", sge.addr);
+            exit(-1);
         }
-        return 0;
+        poll_cq(ctx_->cqs[qp_idx], 1);
+    }
+
+    void Server::Pwrite(int qp_idx, char *src, size_t src_len, char *dest) {
+        struct ibv_send_wr write_wr, read_wr;
+        struct ibv_sge sge, read_sge;
+        struct ibv_send_wr *bad;
+
+        sge.addr = (uintptr_t) src;
+        sge.length = src_len;
+        sge.lkey = ctx_->mr->lkey;
+
+        read_sge.addr = (uintptr_t) src;
+        read_sge.length = 0;
+        read_sge.lkey = ctx_->mr->lkey;
+
+        write_wr.wr_id = 0;
+        write_wr.sg_list = &sge;
+        write_wr.num_sge = 1;
+        write_wr.opcode = IBV_WR_RDMA_WRITE;
+        //write_wr.send_flags = IBV_SEND_SIGNALED;
+
+        write_wr.wr.rdma.remote_addr = (uintptr_t)dest;
+        write_wr.wr.rdma.rkey = ctx_->remote_conn[qp_idx].rkey;
+
+        read_wr.opcode = IBV_WR_RDMA_READ;
+        read_wr.wr_id = 1;
+        read_wr.num_sge = 1;
+        read_wr.sg_list = &read_sge;
+        read_wr.next = nullptr;
+        read_wr.send_flags = IBV_SEND_SIGNALED;
+        read_wr.wr.rdma.remote_addr = (uintptr_t)dest;
+        read_wr.wr.rdma.rkey = ctx_->remote_conn[qp_idx].rkey;
+
+        write_wr.next = &read_wr;
+        //write_wr.next = nullptr;
+
+        int ret = ibv_post_send(ctx_->qps[qp_idx], &write_wr, &bad);
+        if (ret) {
+            fprintf(stdout, "post send failed [%d] [%s]\n", ret, strerror(errno));
+            fprintf(stdout, "wr id [%d]\n", bad->wr_id);
+            fprintf(stdout, "sge offset: %lu\n", sge.addr);
+            exit(-1);
+        }
+        poll_cq(ctx_->cqs[qp_idx], 1);
+    }
+
+    bool Server::CAS(int qp_idx, char *src, char *dest, uint64_t old_v, uint64_t new_v) {
+        struct ibv_send_wr write_wr;
+        struct ibv_sge sge;
+        struct ibv_send_wr *bad;
+
+        sge.addr = (uintptr_t) src;
+        sge.length = 8;
+        sge.lkey = ctx_->mr->lkey;
+
+        write_wr.wr_id = 0;
+        write_wr.sg_list = &sge;
+        write_wr.num_sge = 1;
+        write_wr.opcode = IBV_WR_ATOMIC_CMP_AND_SWP;
+        write_wr.send_flags = IBV_SEND_SIGNALED;
+
+        write_wr.wr.atomic.remote_addr = (uintptr_t)dest;
+        write_wr.wr.atomic.compare_add = old_v;
+        write_wr.wr.atomic.swap = new_v;
+        write_wr.wr.atomic.rkey = ctx_->remote_conn[qp_idx].rkey;
+
+        write_wr.next = nullptr;
+
+        int ret = ibv_post_send(ctx_->qps[qp_idx], &write_wr, &bad);
+        if (ret) {
+            fprintf(stdout, "post send failed [%d] [%s]\n", ret, strerror(errno));
+            fprintf(stdout, "wr id [%d]\n", bad->wr_id);
+            fprintf(stdout, "sge offset: %lu\n", sge.addr);
+            exit(-1);
+        }
+        poll_cq(ctx_->cqs[qp_idx], 1);
+        uint64_t swapped = *(uint64_t*)sge.addr;
+        //printf("old %llu new %llu swapped %llu\n", old_v, new_v, swapped);
+        return swapped == old_v;
+    }
+
+    void Server::LatencyBench(Server* server, BenchType type, int threads, int qp_idx, size_t total_ops, size_t blk_size) {
+        size_t local_pm_region_size = pmem_size / threads;
+        size_t local_dram_region_size = CLIENT_BUF_SIZE / threads;
+        char* pm_region_start = (char*)server->ctx_->remote_conn[qp_idx].addr + qp_idx * local_pm_region_size;
+        size_t dram_region_start = qp_idx * local_dram_region_size;
+        size_t local_pm_block_nums = local_pm_region_size / blk_size;
+
+        uint64_t seed = 0xdeadbeef;
+
+        switch (type) {
+            case ReadLat: {
+                for (int i = 0; i < total_ops; ++i) {
+                    size_t blk_no = hrd_fastrand(&seed) % (local_pm_block_nums - 1);
+                    printf("cur: %lu, total: %lu\n", blk_no, local_pm_block_nums);
+                    auto start = std::chrono::high_resolution_clock::now();
+                    server->Read(qp_idx, server->ctx_->buf + dram_region_start, blk_size,
+                                   pm_region_start + blk_no * blk_size);
+                    auto end = std::chrono::high_resolution_clock::now();
+                    std::chrono::duration<double, std::micro> elapse = end - start;
+                    /*if (i % 1000 == 0) {
+                        fprintf(stdout, "finished %ld\r", i);
+                        fflush(stdout);
+                    }*/
+                    server->histogram.Add(elapse.count());
+                }
+                break;
+            }
+
+            case WriteLat: {
+                for (int i = 0; i < total_ops; ++i) {
+                    size_t blk_no = hrd_fastrand(&seed) % (local_pm_block_nums - 1);
+                    printf("cur: %lu, total: %lu\n", blk_no, local_pm_block_nums);
+                    auto start = std::chrono::high_resolution_clock::now();
+                    server->Write(qp_idx, server->ctx_->buf + dram_region_start, blk_size,
+                                   pm_region_start + blk_no * blk_size);
+                    auto end = std::chrono::high_resolution_clock::now();
+                    std::chrono::duration<double, std::micro> elapse = end - start;
+                    /*if (i % 1000 == 0) {
+                        fprintf(stdout, "finished %ld\r", i);
+                        fflush(stdout);
+                    }*/
+                    server->histogram.Add(elapse.count());
+                }
+                break;
+            }
+
+            case PwriteLat: {
+                for (int i = 0; i < total_ops; ++i) {
+                    size_t blk_no = hrd_fastrand(&seed) % (local_pm_block_nums - 1);
+                    printf("cur: %lu, total: %lu\n", blk_no, local_pm_block_nums);
+                    auto start = std::chrono::high_resolution_clock::now();
+                    server->Pwrite(qp_idx, server->ctx_->buf + dram_region_start, blk_size,
+                                   pm_region_start + blk_no * blk_size);
+                    auto end = std::chrono::high_resolution_clock::now();
+                    std::chrono::duration<double, std::micro> elapse = end - start;
+                    /*if (i % 1000 == 0) {
+                        fprintf(stdout, "finished %ld\r", i);
+                        fflush(stdout);
+                    }*/
+                    server->histogram.Add(elapse.count());
+                }
+                break;
+            }
+
+            case CASLat: {
+                for (int i = 0; i < total_ops; ++i) {
+                    size_t blk_no = hrd_fastrand(&seed) % (local_pm_block_nums - 1);
+                    //printf("cur: %lu, total: %lu\n", blk_no, local_pm_block_nums);
+                    auto start = std::chrono::high_resolution_clock::now();
+                    server->CAS(qp_idx, server->ctx_->buf + dram_region_start,
+                                   pm_region_start + blk_no * blk_size, 0, i);
+                    auto end = std::chrono::high_resolution_clock::now();
+                    std::chrono::duration<double, std::micro> elapse = end - start;
+                    /*if (i % 1000 == 0) {
+                        fprintf(stdout, "finished %ld\r", i);
+                        fflush(stdout);
+                    }*/
+                    server->histogram.Add(elapse.count());
+                }
+                break;
+            }
+        }
+
+
+        printf("%s\n", server->histogram.ToString().c_str());
     }
 
     void Server::poll_cq(struct ibv_cq* cq, int num_comps) {

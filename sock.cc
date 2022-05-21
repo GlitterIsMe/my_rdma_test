@@ -72,10 +72,11 @@ namespace sock {
     }
 
     int disconnect_sock(bool is_server) {
-        close(local_sock);
+        //close(local_sock);
         if (is_server) {
             close(remote_sock);
         }
+        close(local_sock);
         return 0;
     }
 }

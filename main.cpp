@@ -50,7 +50,7 @@ void RunReadLatencyBench(rdma::Server* server, uint64_t block_size, uint64_t thr
                                        FLAGS_ops / threads_num, block_size});*/
         rdma::Server::LatencyBench(server, rdma::ReadLat, threads_num, qp_idx, FLAGS_ops / threads_num, block_size);
     }
-    std::cout << "Finishing RDMA Pwrite Latency Test\n";
+    std::cout << "Finishing RDMA Read Latency Test\n";
 }
 
 void RunWriteLatencyBench(rdma::Server* server, uint64_t block_size, uint64_t threads_num) {
@@ -62,7 +62,19 @@ void RunWriteLatencyBench(rdma::Server* server, uint64_t block_size, uint64_t th
                                        FLAGS_ops / threads_num, block_size});*/
         rdma::Server::LatencyBench(server, rdma::WriteLat, threads_num, qp_idx, FLAGS_ops / threads_num, block_size);
     }
-    std::cout << "Finishing RDMA Pwrite Latency Test\n";
+    std::cout << "Finishing RDMA Write Latency Test\n";
+}
+
+void RunNoopLatencyBench(rdma::Server* server, uint64_t block_size, uint64_t threads_num) {
+    std::cout << "Running RDMA Noop Latency Test\n";
+    std::vector<std::thread> thrds;
+    for (int i = 0; i < threads_num; ++i) {
+        int qp_idx = i;
+        /*thrds.emplace_back(std::thread{rdma::Server::PwriteLatency, server, threads_num, qp_idx,
+                                       FLAGS_ops / threads_num, block_size});*/
+        rdma::Server::LatencyBench(server, rdma::NoopLat, threads_num, qp_idx, FLAGS_ops / threads_num, block_size);
+    }
+    std::cout << "Finishing RDMA Noop Latency Test\n";
 }
 
 void RunCASLatencyBench(rdma::Server* server, uint64_t block_size, uint64_t threads_num) {
@@ -74,7 +86,7 @@ void RunCASLatencyBench(rdma::Server* server, uint64_t block_size, uint64_t thre
                                        FLAGS_ops / threads_num, block_size});*/
         rdma::Server::LatencyBench(server, rdma::CASLat, threads_num, qp_idx, FLAGS_ops / threads_num, block_size);
     }
-    std::cout << "Finishing RDMA Pwrite Latency Test\n";
+    std::cout << "Finishing RDMA CAS Latency Test\n";
 }
 
 void RunWrite(rdma::RDMA_Context *ctx, uint64_t block_size, uint64_t threads_num) {
@@ -180,6 +192,7 @@ int main(int argc, char **argv) {
             if (FLAGS_benchmark == "cas" | FLAGS_benchmark == "cas_latency") {
                 memset(buf, 0, FLAGS_pmem_size * 1024 * 1024);
             }
+            memset(buf, '1', FLAGS_pmem_size * 1024 * 1024);
         }
     } else {
         // For client, new a 1GB buffer, and set the size of remote buffer
@@ -240,6 +253,8 @@ int main(int argc, char **argv) {
         bench_func = &RunWriteLatencyBench;
     } else if (FLAGS_benchmark == "cas_latency") {
         bench_func = &RunCASLatencyBench;
+    } else if (FLAGS_benchmark == "noop_latency") {
+        bench_func = &RunNoopLatencyBench;
     }
 
     if (!FLAGS_is_server) {

@@ -19,6 +19,7 @@ namespace rdma {
         WriteLat,
         PwriteLat,
         CASLat,
+        NoopLat,
     };
 
     struct con_data_t {
@@ -75,6 +76,8 @@ namespace rdma {
         void Read(int qp_idx, char* src, size_t src_len, char* dest);
 
         void Pwrite(int qp_idx, char* src, size_t src_len, char* dest);
+
+        void Noop(int qp_idx, char* src, size_t src_len, char* dest);
 
         bool CAS(int qp_idx, char* src, char* dest, uint64_t old_v, uint64_t new_v);
 

@@ -222,6 +222,8 @@ namespace rdma {
         struct ibv_send_wr write_wr;
         struct ibv_sge sge;
         struct ibv_send_wr *bad;
+        struct ibv_wc wc;
+        int res = 0, total_comp = 0;
 
         sge.addr = (uintptr_t) src;
         sge.length = src_len;
@@ -238,6 +240,7 @@ namespace rdma {
 
         write_wr.next = nullptr;
 
+        auto start = std::chrono::high_resolution_clock::now();
         int ret = ibv_post_send(ctx_->qps[qp_idx], &write_wr, &bad);
         if (ret) {
             fprintf(stdout, "post send failed [%d] [%s]\n", ret, strerror(errno));
@@ -245,10 +248,57 @@ namespace rdma {
             fprintf(stdout, "sge offset: %lu\n", sge.addr);
             exit(-1);
         }
-        poll_cq(ctx_->cqs[qp_idx], 1);
+        //poll_cq(ctx_->cqs[qp_idx], 1);
+
+        while (ibv_poll_cq(ctx_->cqs[qp_idx], 1, &wc) < 1) {
+            // poll
+        }
+        auto end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double, std::micro> elapse = end - start;
+        /*if (i % 1000 == 0) {
+            fprintf(stdout, "finished %ld\r", i);
+            fflush(stdout);
+        }*/
+        histogram.Add(elapse.count());
+    }
+
+    void Server::Noop(int qp_idx, char* src, size_t src_len, char* dest) {
+        struct ibv_send_wr write_wr;
+        struct ibv_sge sge;
+        struct ibv_send_wr *bad;
+        struct ibv_wc wc;
+
+        write_wr.wr_id = 0;
+        write_wr.sg_list = &sge;
+        write_wr.num_sge = 0;
+        write_wr.opcode = IBV_WR_RDMA_WRITE;
+        write_wr.send_flags = IBV_SEND_SIGNALED;
+        write_wr.next = nullptr;
+
+        auto start = std::chrono::high_resolution_clock::now();
+        int ret = ibv_post_send(ctx_->qps[qp_idx], &write_wr, &bad);
+        if (ret) {
+            fprintf(stdout, "post send failed [%d] [%s]\n", ret, strerror(errno));
+            fprintf(stdout, "wr id [%d]\n", bad->wr_id);
+            fprintf(stdout, "sge offset: %lu\n", sge.addr);
+            exit(-1);
+        }
+        //poll_cq(ctx_->cqs[qp_idx], 1);
+
+        while (ibv_poll_cq(ctx_->cqs[qp_idx], 1, &wc) < 1) {
+            // poll
+        }
+        auto end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double, std::micro> elapse = end - start;
+        /*if (i % 1000 == 0) {
+            fprintf(stdout, "finished %ld\r", i);
+            fflush(stdout);
+        }*/
+        histogram.Add(elapse.count());
     }
 
     void Server::Read(int qp_idx, char* src, size_t src_len, char* dest) {
+
         struct ibv_send_wr write_wr;
         struct ibv_sge sge;
         struct ibv_send_wr *bad;
@@ -256,7 +306,9 @@ namespace rdma {
         sge.addr = (uintptr_t) src;
         sge.length = src_len;
         sge.lkey = ctx_->mr->lkey;
+        //memset(src, '0', src_len);
 
+        auto start = std::chrono::high_resolution_clock::now();
         write_wr.wr_id = 0;
         write_wr.sg_list = &sge;
         write_wr.num_sge = 1;
@@ -275,7 +327,24 @@ namespace rdma {
             fprintf(stdout, "sge offset: %lu\n", sge.addr);
             exit(-1);
         }
+
+        /*char tmp_buf[src_len];
+        while (tmp_buf[src_len - 1] != '1') {
+            memcpy(tmp_buf, src, src_len);
+            //printf("poll res %s\n", (char*)sge.addr);
+        }*/
+        //printf("%lf\n", elapse.count());
+        /*if (i % 1000 == 0) {
+            fprintf(stdout, "finished %ld\r", i);
+            fflush(stdout);
+        }*/
+
         poll_cq(ctx_->cqs[qp_idx], 1);
+        auto end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double, std::micro> elapse = end - start;
+        histogram.Add(elapse.count());
+        //printf("sge len %d\n", sge.length);
+        //printf("read res %s\n", (char*)sge.addr);
     }
 
     void Server::Pwrite(int qp_idx, char *src, size_t src_len, char *dest) {
@@ -283,6 +352,7 @@ namespace rdma {
         struct ibv_sge sge, read_sge;
         struct ibv_send_wr *bad;
 
+        auto start = std::chrono::high_resolution_clock::now();
         sge.addr = (uintptr_t) src;
         sge.length = src_len;
         sge.lkey = ctx_->mr->lkey;
@@ -320,6 +390,9 @@ namespace rdma {
             exit(-1);
         }
         poll_cq(ctx_->cqs[qp_idx], 1);
+        auto end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double, std::micro> elapse = end - start;
+        histogram.Add(elapse.count());
     }
 
     bool Server::CAS(int qp_idx, char *src, char *dest, uint64_t old_v, uint64_t new_v) {
@@ -327,6 +400,7 @@ namespace rdma {
         struct ibv_sge sge;
         struct ibv_send_wr *bad;
 
+        auto start = std::chrono::high_resolution_clock::now();
         sge.addr = (uintptr_t) src;
         sge.length = 8;
         sge.lkey = ctx_->mr->lkey;
@@ -352,6 +426,9 @@ namespace rdma {
             exit(-1);
         }
         poll_cq(ctx_->cqs[qp_idx], 1);
+        auto end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double, std::micro> elapse = end - start;
+        histogram.Add(elapse.count());
         uint64_t swapped = *(uint64_t*)sge.addr;
         //printf("old %llu new %llu swapped %llu\n", old_v, new_v, swapped);
         return swapped == old_v;
@@ -370,17 +447,9 @@ namespace rdma {
             case ReadLat: {
                 for (int i = 0; i < total_ops; ++i) {
                     size_t blk_no = hrd_fastrand(&seed) % (local_pm_block_nums - 1);
-                    printf("cur: %lu, total: %lu\n", blk_no, local_pm_block_nums);
-                    auto start = std::chrono::high_resolution_clock::now();
+                    //printf("cur: %lu, total: %lu\n", blk_no, local_pm_block_nums);
                     server->Read(qp_idx, server->ctx_->buf + dram_region_start, blk_size,
                                    pm_region_start + blk_no * blk_size);
-                    auto end = std::chrono::high_resolution_clock::now();
-                    std::chrono::duration<double, std::micro> elapse = end - start;
-                    /*if (i % 1000 == 0) {
-                        fprintf(stdout, "finished %ld\r", i);
-                        fflush(stdout);
-                    }*/
-                    server->histogram.Add(elapse.count());
                 }
                 break;
             }
@@ -388,17 +457,9 @@ namespace rdma {
             case WriteLat: {
                 for (int i = 0; i < total_ops; ++i) {
                     size_t blk_no = hrd_fastrand(&seed) % (local_pm_block_nums - 1);
-                    printf("cur: %lu, total: %lu\n", blk_no, local_pm_block_nums);
-                    auto start = std::chrono::high_resolution_clock::now();
+                    //printf("cur: %lu, total: %lu\n", blk_no, local_pm_block_nums);
                     server->Write(qp_idx, server->ctx_->buf + dram_region_start, blk_size,
                                    pm_region_start + blk_no * blk_size);
-                    auto end = std::chrono::high_resolution_clock::now();
-                    std::chrono::duration<double, std::micro> elapse = end - start;
-                    /*if (i % 1000 == 0) {
-                        fprintf(stdout, "finished %ld\r", i);
-                        fflush(stdout);
-                    }*/
-                    server->histogram.Add(elapse.count());
                 }
                 break;
             }
@@ -406,17 +467,9 @@ namespace rdma {
             case PwriteLat: {
                 for (int i = 0; i < total_ops; ++i) {
                     size_t blk_no = hrd_fastrand(&seed) % (local_pm_block_nums - 1);
-                    printf("cur: %lu, total: %lu\n", blk_no, local_pm_block_nums);
-                    auto start = std::chrono::high_resolution_clock::now();
+                    //printf("cur: %lu, total: %lu\n", blk_no, local_pm_block_nums);
                     server->Pwrite(qp_idx, server->ctx_->buf + dram_region_start, blk_size,
                                    pm_region_start + blk_no * blk_size);
-                    auto end = std::chrono::high_resolution_clock::now();
-                    std::chrono::duration<double, std::micro> elapse = end - start;
-                    /*if (i % 1000 == 0) {
-                        fprintf(stdout, "finished %ld\r", i);
-                        fflush(stdout);
-                    }*/
-                    server->histogram.Add(elapse.count());
                 }
                 break;
             }
@@ -425,17 +478,28 @@ namespace rdma {
                 for (int i = 0; i < total_ops; ++i) {
                     size_t blk_no = hrd_fastrand(&seed) % (local_pm_block_nums - 1);
                     //printf("cur: %lu, total: %lu\n", blk_no, local_pm_block_nums);
-                    auto start = std::chrono::high_resolution_clock::now();
                     server->CAS(qp_idx, server->ctx_->buf + dram_region_start,
                                    pm_region_start + blk_no * blk_size, 0, i);
+                }
+                break;
+            }
+
+            case NoopLat: {
+                for (int i = 0; i < total_ops; ++i) {
+                    size_t blk_no = hrd_fastrand(&seed) % (local_pm_block_nums - 1);
+                    //printf("cur: %lu, total: %lu\n", blk_no, local_pm_block_nums);
+                    auto start = std::chrono::high_resolution_clock::now();
+                    server->Noop(qp_idx, server->ctx_->buf + dram_region_start, blk_size,
+                                  pm_region_start + blk_no * blk_size);
                     auto end = std::chrono::high_resolution_clock::now();
                     std::chrono::duration<double, std::micro> elapse = end - start;
                     /*if (i % 1000 == 0) {
                         fprintf(stdout, "finished %ld\r", i);
                         fflush(stdout);
                     }*/
-                    server->histogram.Add(elapse.count());
+                    //server->histogram.Add(elapse.count());
                 }
+                printf("finished RDMA Non-write\n");
                 break;
             }
         }
@@ -453,23 +517,14 @@ namespace rdma {
         int res = 0, total_comp = 0;
         while (total_comp < num_comps) {
             res = ibv_poll_cq(cq, 1, &wc);
-            assert(res <= 1);
+            //assert(res <= 1);
             if (res > 0) {
-//#ifdef DEBUG
-                //for (int i = 0; i < res; ++i) {
                     if (wc.status != IBV_WC_SUCCESS) {
                         fprintf(stdout, "failed request [%ld] [0x%x]\n", wc.wr_id, wc.status);
                         exit(-1);
-                    } /*else {
-                        //printf("wr id %d, op %d\n", wc.wr_id, wc.opcode);
-                    }*/
-                //}
-//#endif
+                    }
                 total_comp += res;
             }
-/*#ifdef DEBUG
-            fprintf(stdout, "polled %d comps\n", total_comp);
-#endif*/
         }
 #ifdef DEBUG
         fprintf(stdout, "finished total poll %d comps\n", total_comp);

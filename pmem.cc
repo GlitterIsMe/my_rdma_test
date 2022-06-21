@@ -22,8 +22,8 @@ namespace rdma {
         return raw;
     }
 
-    void zero_mapped_file(char* raw){
-        pmem_memset_persist(raw, 0, pmem_size);
+    void zero_mapped_file(char* raw, size_t zero_size){
+        pmem_memset_persist(raw, 0, zero_size);
     }
 
     void unmap_file(char* raw) {

@@ -179,6 +179,18 @@ void RunCAS(rdma::Server* server) {
     //std::cout << "[Finish] CAS Throughput: " << (FLAGS_ops * block_size / 1024 / 1024.0) / us * 1000000 << "MB/s\n";
 }
 
+void RunHashSimulation(rdma::Server* server) {
+    std::cout << "Running RDMA Hash Simulation\n";
+    auto start = std::chrono::high_resolution_clock::now();
+    server->HashAccessSimulation2();
+    auto end = std::chrono::high_resolution_clock::now();
+    uint64_t us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    //std::cout << "[Finish] Block size: " << block_size << " bytes\n";
+    std::cout << "[Finish] Run RDMA Hash Simulation: time: " << us << " us\n";
+    //std::cout << "[Finish] CAS OPS: " << (double) FLAGS_ops / us * 1000000 / 1000 << "KOPS\n";
+    //std::cout << "[Finish] CAS Throughput: " << (FLAGS_ops * block_size / 1024 / 1024.0) / us * 1000000 << "MB/s\n";
+}
+
 void RunSend(rdma::RDMA_Context *ctx, uint64_t block_size, uint64_t threads_num) {
     std::cout << "Running RDMA Send\n";
     std::vector<std::thread> thrds;
@@ -310,6 +322,10 @@ int main(int argc, char **argv) {
             bench_func = &RunRead;
         } else if (FLAGS_benchmark == "cas_throughput") {
             bench_func = &RunCAS;
+        } else if (FLAGS_benchmark == "hash_simulation") {
+            bench_func = &RunHashSimulation;
+        } else {
+            printf("unknow benchmark\n");
         }
         bench_func(&server);
     } else {

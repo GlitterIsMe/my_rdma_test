@@ -888,6 +888,52 @@ namespace rdma {
         }
 
     }
+
+    const int kNumBuckets = 256;
+    const int kNumSlots = 4;
+    const double load_factor = 0.9;
+
+    struct Slot {
+        uint64_t key;
+        uint64_t value;
+    };
+
+    struct Bucket {
+        Slot slots[kNumSlots];
+    };
+
+    void Server::HashAccessSimulation() {
+        uintptr_t subtable_start = ctx_->remote_conn[0].addr;
+        for (int i = 0; i < kNumBuckets; ++i) {
+            uintptr_t target_bucket = subtable_start + sizeof(Bucket) * i;
+            for (int j = 1; j < kNumSlots; ++j) {
+                char* dram_region_start = ctx_->buf;
+                CAS(0, dram_region_start, (char*)target_bucket, 0, 1);
+                Read(0, dram_region_start, sizeof(Bucket), (char*)target_bucket);
+                int key = i * kNumSlots + j;
+                memcpy(dram_region_start, (char*)(&key), sizeof(uint64_t));
+                Write(0, dram_region_start, 16, (char*)(target_bucket + j * 16));
+
+                key = 0;
+                memcpy(dram_region_start, (char*)(&key), sizeof(uint64_t));
+                Write(0, dram_region_start, 16, (char*)(target_bucket));
+            }
+        }
+    }
+
+    void Server::HashAccessSimulation2() {
+        uintptr_t subtable_start = ctx_->remote_conn[0].addr;
+        for (int i = 0; i < kNumBuckets; ++i) {
+            uintptr_t target_bucket = subtable_start + sizeof(Bucket) * i;
+            for (int j = 1; j < kNumSlots; ++j) {
+                char* dram_region_start = ctx_->buf;
+                Read(0, dram_region_start, sizeof(Bucket), (char*)target_bucket);
+                int key = i * kNumSlots + j;
+                CAS(0, dram_region_start, (char*)(target_bucket + j * sizeof(Slot)), 0, key);
+                Read(0, dram_region_start, sizeof(Bucket), (char*)target_bucket);
+            }
+        }
+    }
         /*
          * parameter:
          * - max_batch: signal frequency

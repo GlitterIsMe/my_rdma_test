@@ -137,6 +137,9 @@ namespace rdma {
         static void LatencyBench(Server* server, BenchType type, int threads, int qp_idx, size_t total_ops,
                                   size_t blk_size);
 
+        void HashAccessSimulation();
+        void HashAccessSimulation2();
+
         void PrePostRQ(size_t blk_size, size_t max_post);
 
     private:
